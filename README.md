@@ -1,4 +1,4 @@
-# v4Words - 划词翻译 for Chrome
+# v4Words - 划词翻译 Userscript
 ![gif](https://github.com/Vlan20/v4Words/blob/main/img/demo-1-cambridge-dict.gif)
 
 ## 安装方法 / Install
