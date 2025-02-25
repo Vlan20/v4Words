@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         v4Words
+// @name         v4Words - 划词翻译 Userscript
 // @namespace    https://github.com/vlan20/v4words
 // @version      0.1.0
 // @description  v4Words - 更便捷的划词翻译，双击即译，支持谷歌翻译、有道词典及剑桥词典，适配Tampermonkey等脚本管理器。
