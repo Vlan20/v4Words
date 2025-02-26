@@ -8,9 +8,9 @@
 
 2. 下载安装脚本
    
-   - 方式一：通过Greasy Fork[安装](https://greasyfork.org/en/scripts/528047)。
+   - 方式一：通过Greasy Fork[安装脚本](https://greasyfork.org/en/scripts/528047)。
 
-   - 方式二：通过本仓库[下载](https://github.com/vlan20/v4Words/blob/main/v4words.user.js)，下载后将v4words.user.js文件直接拖进Tampermonkey脚本管理页面点击安装。
+   - 方式二：通过本仓库[下载脚本](https://github.com/vlan20/v4Words/blob/main/v4words.user.js)，下载后将v4words.user.js文件直接拖进Tampermonkey脚本管理页面点击安装。
 
 2. 安装完成，刷新网页后即可开始使用。
 			
@@ -22,4 +22,4 @@
 
 ## 反馈
 
-有任何问题、需求和建议点issue提交即可。
+有任何问题、需求和建议点issue提交即可，谢谢！
