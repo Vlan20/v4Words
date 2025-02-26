@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         v4Words - 划词翻译 Userscript
+// @name         v4Words - 划词翻译 UserScript
 // @namespace    https://github.com/vlan20/v4words
-// @version      0.1.0
-// @description  v4Words - 更便捷的划词翻译，双击即译，支持谷歌翻译、有道词典及剑桥词典，适配Tampermonkey等脚本管理器。
+// @version      0.1.1
+// @description  更便捷的划词翻译(select translator)，双击即译，支持谷歌翻译、有道词典及剑桥词典，适配Tampermonkey等脚本管理器。
 // @author       vlan20
 // @license      MIT
 // @match        *://*/*
@@ -24,6 +24,17 @@
 // @updateURL    https://github.com/vlan20/v4words/raw/main/v4words.user.js
 // @supportURL   https://github.com/vlan20/v4words/issues
 // ==/UserScript==
+
+/*
+更新日期：2025-02-26
+当前版本：0.1.1
+
+使用说明：
+1. 双击选中的文本即可翻译
+2. 点击标题栏切换翻译器，目前支持谷歌翻译、有道词典及剑桥词典
+3. 点击音标按钮即可播放发音
+4. 窗口内单击右键，窗口外单击左键，关闭翻译窗口
+*/
 
 /*
 MIT License
@@ -57,13 +68,12 @@ SOFTWARE.
         fontSize: 16, // 基础字体大小
         sourceFontSize: 14, // 原文字体大小
         translationFontSize: 13, // 翻译结果字体大小
-        panelWidth: 300,
-        panelHeight: 400,
         triggerDelay: 150, // 减少触发延迟
         doubleClickDelay: 250, // 减少双击延迟
         selectionOverrideDelay: 400, // 减少选择覆盖延迟
         darkModeClass: 'translator-panel-dark',
         panelSpacing: 12, // 减小面板间距
+        panelWidth: 300,
         maxPanelHeight: 400,
         titleBarHeight: 40, // 添加标题栏高度配置
         animationDuration: 200, // 添加动画持续时间配置
@@ -79,45 +89,25 @@ SOFTWARE.
     // 翻译缓存系统
     const translationCache = {
         cache: new Map(),
-
-        // 生成缓存键
-        generateKey(text, translator) {
-            return `${translator}:${text}`;
-        },
-
-        // 获取缓存
+        generateKey: (text, translator) => `${translator}:${text}`,
         get(text, translator) {
             const key = this.generateKey(text, translator);
             const item = this.cache.get(key);
-            if (!item) return null;
-
-            // 检查是否过期
-            if (Date.now() - item.timestamp > CONFIG.cacheExpiration) {
-                this.cache.delete(key);
+            if (!item || Date.now() - item.timestamp > CONFIG.cacheExpiration) {
+                item && this.cache.delete(key);
                 return null;
             }
-
             return item.translation;
         },
-
-        // 设置缓存
         set(text, translator, translation) {
             const key = this.generateKey(text, translator);
-
-            // 如果缓存已满，删除最旧的条目
             if (this.cache.size >= CONFIG.maxCacheSize) {
                 const oldestKey = Array.from(this.cache.entries())
                     .sort((a, b) => a[1].timestamp - b[1].timestamp)[0][0];
                 this.cache.delete(oldestKey);
             }
-
-            this.cache.set(key, {
-                translation,
-                timestamp: Date.now()
-            });
+            this.cache.set(key, { translation, timestamp: Date.now() });
         },
-
-        // 清除过期缓存
         cleanup() {
             const now = Date.now();
             for (const [key, item] of this.cache.entries()) {
@@ -133,19 +123,14 @@ SOFTWARE.
 
     // 清理函数
     function cleanupPanels() {
-        const panels = document.querySelectorAll('.translator-panel');
-        panels.forEach(panel => {
-            // 不清理固定的面板
-            if (panel !== currentPanel && !panel.classList.contains('pinned')) {
-                panel.remove();
-            }
+        document.querySelectorAll('.translator-panel').forEach(panel => {
+            if (panel !== currentPanel && !panel.classList.contains('pinned')) panel.remove();
         });
     }
 
     // 创建翻译面板前的检查
     function beforeCreatePanel() {
         cleanupPanels();
-        // 只有当当前面板不是固定状态时才移除
         if (currentPanel && !currentPanel.classList.contains('pinned')) {
             currentPanel.remove();
             currentPanel = null;
@@ -156,10 +141,7 @@ SOFTWARE.
 
     // 添加音频播放功能
     const audio = {
-        // 音频元素缓存
         element: null,
-
-        // 获取音频元素
         getElement() {
             if (!this.element) {
                 this.element = document.createElement('audio');
@@ -168,8 +150,6 @@ SOFTWARE.
             }
             return this.element;
         },
-
-        // 播放音频
         async play(url) {
             try {
                 const audioElement = this.getElement();
@@ -185,20 +165,13 @@ SOFTWARE.
     const createTranslator = (name, translateFn) => ({
         name,
         translate: async (text) => {
-            // 检查缓存
             const cachedResult = translationCache.get(text, name);
-            if (cachedResult) {
-                console.log(`[${name}] 使用缓存的翻译结果`);
-                return cachedResult;
-            }
-
-            // 如果没有缓存，执行翻译
+            if (cachedResult) return cachedResult;
+            
             const result = await translateFn(text);
             if (!result) throw new Error(`${name}翻译失败: 翻译结果为空`);
-
-            // 缓存结果
+            
             translationCache.set(text, name, result);
-
             return result;
         }
     });
@@ -206,19 +179,26 @@ SOFTWARE.
     // 翻译器配置
     const TRANSLATORS = {
         google: createTranslator('谷歌翻译', async (text) => {
+            try {
                 const response = await new Promise((resolve, reject) => {
                     GM_xmlhttpRequest({
                         method: 'GET',
                         url: `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=${encodeURIComponent(text)}`,
-                        onload: resolve,
-                        onerror: reject,
+                        headers: {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'},
+                        onload: resolve, onerror: reject
                     });
                 });
                 const result = JSON.parse(response.responseText);
+                if (!result?.[0]?.length) throw new Error('谷歌翻译返回的数据格式不正确');
                 return result[0].map(x => x[0]).join('');
+            } catch (error) {
+                console.error('谷歌翻译错误:', error);
+                throw new Error('谷歌翻译失败: ' + error.message);
+            }
         }),
 
         youdao: createTranslator('有道词典', async (text) => {
+            try {
                 const response = await new Promise((resolve, reject) => {
                     GM_xmlhttpRequest({
                         method: 'GET',
@@ -227,50 +207,50 @@ SOFTWARE.
                             'Referer': 'https://dict.youdao.com',
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                         },
-                        onload: resolve,
-                        onerror: reject,
+                        onload: resolve, onerror: reject
                     });
                 });
+                
                 const result = JSON.parse(response.responseText);
                 let translation = '';
-                let audioUrls = {uk: '', us: ''};
-
-                // 获取发音URL
-                if (result.ec?.word?.[0]) {
-                    const word = result.ec.word[0];
-                audioUrls = {
-                    uk: word.ukspeech ? `https://dict.youdao.com/dictvoice?audio=${word.ukspeech}` : '',
-                    us: word.usspeech ? `https://dict.youdao.com/dictvoice?audio=${word.usspeech}` : ''
+                const createPronHtml = (type, pron, url) => `<span class="phonetic-item">${type} /${pron}/ <button class="audio-button" data-url="${url}">🔊</button></span>`;
+                const wordInfo = result.ec?.word?.[0];
+                const audioUrls = {
+                    uk: wordInfo?.ukspeech ? `https://dict.youdao.com/dictvoice?audio=${wordInfo.ukspeech}` : '',
+                    us: wordInfo?.usspeech ? `https://dict.youdao.com/dictvoice?audio=${wordInfo.usspeech}` : ''
                 };
-                }
-
+                
                 // 添加音标和发音按钮
-                if (result.ec?.word?.[0]?.ukphone || result.ec?.word?.[0]?.usphone) {
-                const {ukphone, usphone} = result.ec.word[0];
-                        translation += '<div class="phonetic-buttons">';
-                if (ukphone) translation += `<span class="phonetic-item">英 /${ukphone}/ <button class="audio-button" data-url="${audioUrls.uk}">🔊</button></span>`;
-                if (usphone) translation += `<span class="phonetic-item">美 /${usphone}/ <button class="audio-button" data-url="${audioUrls.us}">🔊</button></span>`;
-                        translation += '</div>\n\n';
+                if (wordInfo?.ukphone || wordInfo?.usphone) {
+                    translation += '<div class="phonetic-buttons">';
+                    if (wordInfo.ukphone && audioUrls.uk) translation += createPronHtml('英', wordInfo.ukphone, audioUrls.uk);
+                    if (wordInfo.usphone && audioUrls.us) translation += createPronHtml('美', wordInfo.usphone, audioUrls.us);
+                    translation += '</div>\n\n';
                 }
-
-            // 获取翻译结果
-                if (result.ec?.word?.[0]?.trs) {
-                translation += result.ec.word[0].trs.map(tr => tr.tr[0].l.i.join('; ')).join('\n');
-            } else if (result.fanyi) {
+                
+                // 获取翻译结果
+                if (wordInfo?.trs) {
+                    translation += wordInfo.trs.map(tr => tr.tr[0].l.i.join('; ')).join('\n');
+                } else if (result.fanyi) {
                     translation = result.fanyi.tran;
-            } else if (result.translation) {
+                } else if (result.translation) {
                     translation = result.translation.join('\n');
-            } else if (result.web_trans?.web_translation) {
+                } else if (result.web_trans?.web_translation) {
                     translation = result.web_trans.web_translation
                         .map(item => item.trans.map(t => t.value).join('; '))
                         .join('\n');
                 }
-
-            if (!translation) throw new Error('未找到翻译结果');
+                
+                if (!translation) throw new Error('未找到翻译结果');
                 return translation;
+            } catch (error) {
+                console.error('有道词典错误:', error);
+                throw new Error('有道词典失败: ' + error.message);
+            }
         }),
 
         cambridge: createTranslator('剑桥词典', async (text) => {
+            try {
                 const response = await new Promise((resolve, reject) => {
                     GM_xmlhttpRequest({
                         method: 'GET',
@@ -289,118 +269,102 @@ SOFTWARE.
                 const doc = parser.parseFromString(response.responseText, 'text/html');
                 let translation = '';
 
-                // 创建词性标签HTML的辅助函数
-                const createPosTagsHtml = (posStr) => {
-                    if (!posStr) return '';
-                    const tags = posStr.split(/[,，、\n]/)
-                        .map(p => p.trim())
-                        .filter(p => p);
-                    return tags.map(tag => `<div class="pos-tag">${tag}</div>`).join('');
-                };
-
-                // 获取音标和发音URL
-                const getFullUrl = url => url ? (url.startsWith('http') ? url : url.startsWith('//') ? 'https:' + url : `https://dictionary.cambridge.org${url}`) : '';
-
-                // 获取所有发音信息
-                const getPronunciations = (container) => {
+                // 辅助函数
+                const createPosTagsHtml = posStr => !posStr ? '' : posStr.split(/[,，、\n]/).map(p => p.trim()).filter(p => p).map(tag => `<div class="pos-tag">${tag}</div>`).join('');
+                const getFullUrl = url => !url ? '' : url.startsWith('http') ? url : url.startsWith('//') ? 'https:' + url : `https://dictionary.cambridge.org${url}`;
+                const getPronunciations = container => {
+                    if (!container) return { prons: [], audioUrls: [] };
                     const prons = Array.from(container.querySelectorAll('.pron')).map(el => el.textContent.trim());
                     const audioUrls = Array.from(container.querySelectorAll('source[type="audio/mpeg"]')).map(el => getFullUrl(el.getAttribute('src')));
                     return { prons, audioUrls };
                 };
+                const createPronHtml = (type, pron, audioUrl) => `<span class="phonetic-item">${type} ${pron} <button class="audio-button" data-url="${audioUrl}">🔊</button></span>`;
 
-                // 获取主要发音（顶部）
-                const mainUkContainer = doc.querySelector('.uk.dpron-i');
-                const mainUsContainer = doc.querySelector('.us.dpron-i');
-                const mainUk = mainUkContainer ? getPronunciations(mainUkContainer) : { prons: [], audioUrls: [] };
-                const mainUs = mainUsContainer ? getPronunciations(mainUsContainer) : { prons: [], audioUrls: [] };
-
-                // 添加主音标和发音按钮
+                // 获取主要发音并添加
+                const mainUk = getPronunciations(doc.querySelector('.uk.dpron-i'));
+                const mainUs = getPronunciations(doc.querySelector('.us.dpron-i'));
                 if (mainUk.prons.length > 0 || mainUs.prons.length > 0) {
                     translation += '<div class="phonetic-buttons">';
-                    if (mainUk.prons.length > 0) {
-                        mainUk.prons.forEach((pron, index) => {
-                            translation += `<span class="phonetic-item">英 ${pron} <button class="audio-button" data-url="${mainUk.audioUrls[index]}">🔊</button></span>`;
-                        });
-                    }
-                    if (mainUs.prons.length > 0) {
-                        mainUs.prons.forEach((pron, index) => {
-                            translation += `<span class="phonetic-item">美 ${pron} <button class="audio-button" data-url="${mainUs.audioUrls[index]}">🔊</button></span>`;
-                        });
-                    }
+                    mainUk.prons.forEach((pron, i) => translation += createPronHtml('英', pron, mainUk.audioUrls[i]));
+                    mainUs.prons.forEach((pron, i) => translation += createPronHtml('美', pron, mainUs.audioUrls[i]));
                     translation += '</div>\n\n';
+                }
+
+                // 处理释义
+                function processSenses(senses, pos) {
+                    if (senses.length === 0 && pos) 
+                        return `<div class="sense-block pos-only"><div class="pos-tags">${createPosTagsHtml(pos)}</div></div>`;
+
+                    return senses.map(sense => {
+                        const def = sense.querySelector('.ddef_h .def')?.textContent.trim() || '';
+                        const trans = sense.querySelector('.def-body .trans')?.textContent.trim() || '';
+                        const levelTag = sense.querySelector('.dxref')?.textContent.trim() || '';
+                        let senseProns = '';
+                        const sensePronContainers = sense.querySelectorAll('.dpron-i');
+                        
+                        if (sensePronContainers.length > 0) {
+                            const ukContainer = Array.from(sensePronContainers).find(c => c.classList.contains('uk'));
+                            const usContainer = Array.from(sensePronContainers).find(c => c.classList.contains('us'));
+                            const sharedPron = sense.querySelector('.pron')?.textContent.trim();
+                            senseProns = '<div class="sense-phonetic">';
+                            
+                            if (sharedPron) {
+                                const ukUrl = ukContainer ? getFullUrl(ukContainer.querySelector('source[type="audio/mpeg"]')?.getAttribute('src')) : '';
+                                const usUrl = usContainer ? getFullUrl(usContainer.querySelector('source[type="audio/mpeg"]')?.getAttribute('src')) : '';
+                                if (ukUrl) senseProns += createPronHtml('英', sharedPron, ukUrl);
+                                if (usUrl) senseProns += createPronHtml('美', sharedPron, usUrl);
+                            } else {
+                                const ukProns = getPronunciations(ukContainer), usProns = getPronunciations(usContainer);
+                                ukProns.prons.forEach((pron, i) => senseProns += createPronHtml('英', pron, ukProns.audioUrls[i]));
+                                usProns.prons.forEach((pron, i) => senseProns += createPronHtml('美', pron, usProns.audioUrls[i]));
+                            }
+                            senseProns += '</div>';
+                        }
+
+                        return pos ? 
+                            `<div class="sense-block">
+                                <div class="pos-tags">${createPosTagsHtml(pos)}${levelTag ? `<div class="level-tag">${levelTag}</div>` : ''}</div>
+                                <div class="def-content">${senseProns}<div class="def-text">${def}</div>${trans ? `<div class="trans-line">${trans}</div>` : ''}</div>
+                            </div>` : 
+                            `<div class="sense-block no-pos">
+                                <div class="def-content">${senseProns}<div class="def-text">${def}</div>${trans ? `<div class="trans-line">${trans}</div>` : ''}</div>
+                            </div>`;
+                    }).join('\n');
                 }
 
                 // 获取释义
                 const entries = doc.querySelectorAll('.pr.entry-body__el');
                 if (entries.length > 0) {
                     translation += Array.from(entries).map(entry => {
-                        // 获取所有词性标签，包括多词性的情况
                         const posElements = entry.querySelectorAll('.pos-header .pos');
                         const pos = posElements.length > 0 ?
-                            Array.from(posElements)
-                                .map(el => el.textContent.trim())
-                                .filter((value, index, self) => self.indexOf(value) === index) // 去重
-                                .join('\n') :
+                            Array.from(posElements).map(el => el.textContent.trim()).filter((v, i, s) => s.indexOf(v) === i).join('\n') :
                             entry.querySelector('.pos')?.textContent.trim() || '';
 
-                        // 获取所有释义组
-                        const senseGroups = Array.from(entry.querySelectorAll('.pr.dsense-block')).filter(group =>
-                            !group.querySelector('.phrase-title, .idiom-title')
-                        );
-
-                        // 如果没有找到释义组，尝试获取单个释义
+                        const senseGroups = Array.from(entry.querySelectorAll('.pr.dsense-block')).filter(g => !g.querySelector('.phrase-title, .idiom-title'));
                         if (senseGroups.length === 0) {
-                            const senses = Array.from(entry.querySelectorAll('.ddef_block')).filter(sense =>
-                                !sense.closest('.phrase-block, .idiom-block')
-                            );
+                            const senses = Array.from(entry.querySelectorAll('.ddef_block')).filter(s => !s.closest('.phrase-block, .idiom-block'));
                             return processSenses(senses, pos);
                         }
 
-                        // 处理每个释义组
                         return senseGroups.map(group => {
-                            // 获取词性标签和词汇等级
                             const groupPos = group.querySelector('.dsense-header .pos')?.textContent.trim() || pos;
                             const levelTag = group.querySelector('.dsense-header .dxref')?.textContent.trim() || '';
-
-                            // 获取该组下的所有释义
-                            const senses = Array.from(group.querySelectorAll('.ddef_block')).filter(sense =>
-                                !sense.closest('.phrase-block, .idiom-block')
-                            );
-
-                            // 创建词性标签和等级标识的HTML
-                            const posHtml = groupPos ? `<div class="sense-block">
-                                <div class="pos-tags">
-                                    ${createPosTagsHtml(groupPos)}
-                                    ${levelTag ? `<div class="level-tag">${levelTag}</div>` : ''}
-                                </div>
-                            </div>` : '';
-
-                            // 处理释义
-                            const sensesHtml = processSenses(senses, groupPos);
-
-                            return `${posHtml}${sensesHtml}`;
+                            const senses = Array.from(group.querySelectorAll('.ddef_block')).filter(s => !s.closest('.phrase-block, .idiom-block'));
+                            const posHtml = groupPos ? `<div class="sense-block"><div class="pos-tags">${createPosTagsHtml(groupPos)}${levelTag ? `<div class="level-tag">${levelTag}</div>` : ''}</div></div>` : '';
+                            return `${posHtml}${processSenses(senses, groupPos)}`;
                         }).join('\n');
                     }).join('\n');
 
                     // 获取短语
                     const phrases = doc.querySelectorAll('.phrase-block, .idiom-block');
                     if (phrases.length > 0) {
-                        translation += '\n\n';
-                        translation += Array.from(phrases).map(phraseBlock => {
+                        translation += '\n\n' + Array.from(phrases).map(phraseBlock => {
                             const phraseTitle = phraseBlock.querySelector('.phrase-title, .idiom-title')?.textContent.trim() || '';
-                            const senses = Array.from(phraseBlock.querySelectorAll('.ddef_block'));
-
-                            // 获取短语的定义（不包含例句）
-                            const phraseDef = senses[0]?.querySelector('.def')?.textContent.trim() || '';
-
+                            const phraseDef = phraseBlock.querySelector('.ddef_block .def')?.textContent.trim() || '';
                             return `<div class="sense-block">
-                                <div class="pos-tags">
-                                    ${createPosTagsHtml('phrase')}
-                                </div>
-                                <div class="def-content">
-                                    <div class="def-text">${phraseTitle}</div>
-                                    <div class="trans-line">${phraseDef}</div>
-                                </div>
+                                <div class="pos-tags">${createPosTagsHtml('phrase')}</div>
+                                <div class="def-content"><div class="def-text">${phraseTitle}</div><div class="trans-line">${phraseDef}</div></div>
                             </div>`;
                         }).join('\n');
                     }
@@ -408,95 +372,11 @@ SOFTWARE.
                     throw new Error('未找到释义');
                 }
 
-                function processSenses(senses, pos) {
-                        if (senses.length === 0 && pos) {
-                            return `<div class="sense-block pos-only">
-                            <div class="pos-tags">
-                                ${createPosTagsHtml(pos)}
-                                </div>
-                            </div>`;
-                        }
-
-                    return senses.map(sense => {
-                        // 获取释义和翻译
-                            const def = sense.querySelector('.ddef_h .def')?.textContent.trim() || '';
-                        const trans = sense.querySelector('.def-body .trans')?.textContent.trim() || '';
-                        // 获取词汇等级
-                        const levelTag = sense.querySelector('.dxref')?.textContent.trim() || '';
-
-                        // 获取这个释义下的所有发音
-                        let senseProns = '';
-                        const sensePronContainers = sense.querySelectorAll('.dpron-i');
-                        if (sensePronContainers.length > 0) {
-                            // 获取音标和发音按钮
-                            let ukContainer, usContainer;
-                            Array.from(sensePronContainers).forEach(container => {
-                                if (container.classList.contains('uk')) ukContainer = container;
-                                else if (container.classList.contains('us')) usContainer = container;
-                            });
-
-                            // 获取共享音标（如果存在）
-                            const sharedPron = sense.querySelector('.pron')?.textContent.trim();
-
-                            if (sharedPron) {
-                                // 如果有共享音标，使用一个音标但两个发音按钮
-                                senseProns = '<div class="sense-phonetic">';
-                                const ukUrl = ukContainer ? getFullUrl(ukContainer.querySelector('source[type="audio/mpeg"]')?.getAttribute('src')) : '';
-                                const usUrl = usContainer ? getFullUrl(usContainer.querySelector('source[type="audio/mpeg"]')?.getAttribute('src')) : '';
-
-                                if (ukUrl || usUrl) {
-                                    senseProns += `<span class="phonetic-item">`;
-                                    if (ukUrl) senseProns += `英 ${sharedPron} <button class="audio-button" data-url="${ukUrl}">🔊</button>`;
-                                    if (usUrl) senseProns += `美 ${sharedPron} <button class="audio-button" data-url="${usUrl}">🔊</button>`;
-                                    senseProns += `</span>`;
-                                }
-                                senseProns += '</div>';
-                            } else {
-                                // 否则使用分别的音标和发音按钮
-                                const ukProns = ukContainer ? getPronunciations(ukContainer) : { prons: [], audioUrls: [] };
-                                const usProns = usContainer ? getPronunciations(usContainer) : { prons: [], audioUrls: [] };
-
-                                if (ukProns.prons.length > 0 || usProns.prons.length > 0) {
-                                    senseProns = '<div class="sense-phonetic">';
-                                    if (ukProns.prons.length > 0) {
-                                        ukProns.prons.forEach((pron, index) => {
-                                            senseProns += `<span class="phonetic-item">英 ${pron} <button class="audio-button" data-url="${ukProns.audioUrls[index]}">🔊</button></span>`;
-                                        });
-                                    }
-                                    if (usProns.prons.length > 0) {
-                                        usProns.prons.forEach((pron, index) => {
-                                            senseProns += `<span class="phonetic-item">美 ${pron} <button class="audio-button" data-url="${usProns.audioUrls[index]}">🔊</button></span>`;
-                                        });
-                                    }
-                                    senseProns += '</div>';
-                                }
-                            }
-                        }
-
-                        const template = pos ?
-                            `<div class="sense-block">
-                                <div class="pos-tags">
-                                    ${createPosTagsHtml(pos)}
-                                    ${levelTag ? `<div class="level-tag">${levelTag}</div>` : ''}
-                                </div>
-                                <div class="def-content">
-                                    ${senseProns}
-                                    <div class="def-text">${def}</div>
-                                    ${trans ? `<div class="trans-line">${trans}</div>` : ''}
-                                </div>
-                            </div>` :
-                            `<div class="sense-block no-pos">
-                                    <div class="def-content">
-                                    ${senseProns}
-                                        <div class="def-text">${def}</div>
-                                        ${trans ? `<div class="trans-line">${trans}</div>` : ''}
-                                    </div>
-                                </div>`;
-                        return template;
-                        }).join('\n');
-                }
-
                 return translation;
+            } catch (error) {
+                console.error('剑桥词典错误:', error);
+                throw new Error('剑桥词典失败: ' + error.message);
+            }
         })
     };
 
@@ -585,7 +465,7 @@ SOFTWARE.
             padding: var(--spacing-md) !important;
             box-shadow: 0 4px 12px var(--panel-shadow) !important;
             max-width: ${CONFIG.panelWidth}px !important;
-            position: absolute !important;
+            position: fixed !important; /* 使用fixed定位，确保相对于视口 */
             z-index: 2147483647 !important;
             display: none;
             opacity: 0;
@@ -593,20 +473,32 @@ SOFTWARE.
             transition: var(--theme-transition),
                         opacity 0.3s,
                         transform 0.3s !important;
+            max-height: 80vh !important; /* 限制最大高度为视口高度的80% */
+            overflow: hidden !important; /* 确保面板不会溢出 */
+        }
+
+        /* 拖动时的样式 */
+        .translator-panel.dragging {
+            transition: none !important; /* 拖动时禁用过渡效果 */
+            opacity: 0.95 !important; /* 轻微透明 */
+            box-shadow: 0 8px 24px var(--panel-shadow) !important; /* 增强阴影 */
+            cursor: move !important;
         }
 
         /* 标题栏禁用文本选择 */
         .translator-panel .title-bar {
             user-select: none !important;
+            cursor: move !important; /* 明确指示可拖动 */
         }
 
         /* 调整内容区域的内边距和滚动条 */
         .translator-panel .content {
             position: relative !important;
-            overflow: hidden !important;
+            overflow: visible !important; /* 修改为visible，让子元素的滚动条可见 */
             display: flex !important;
             flex-direction: column !important;
-            height: 100% !important;
+            height: auto !important; /* 修改为auto，根据内容自动调整高度 */
+            max-height: calc(80vh - ${CONFIG.titleBarHeight}px) !important; /* 限制最大高度，减去标题栏高度 */
         }
 
         /* 源文本容器样式 */
@@ -627,6 +519,9 @@ SOFTWARE.
             font-size: ${CONFIG.sourceFontSize}px !important;
             line-height: 1.5 !important;
             user-select: text !important;
+            word-wrap: break-word !important; /* 确保长单词换行 */
+            overflow-wrap: break-word !important; /* 现代浏览器的单词换行 */
+            white-space: pre-wrap !important; /* 保留换行但允许自动换行 */
         }
 
         .translator-panel .source-text strong {
@@ -634,11 +529,18 @@ SOFTWARE.
             font-weight: 600 !important;
         }
 
-        /* 翻译内容容器样式 */
+        /* 翻译内容容器样式 - 优化Firefox滚动条 */
         .translator-panel .translation-container {
             flex: 1 !important;
             overflow-y: auto !important;
             padding: var(--spacing-md) var(--spacing-md) !important;
+            scrollbar-width: thin !important; /* Firefox 滚动条样式 */
+            scrollbar-color: var(--text-tertiary) var(--hover-bg) !important; /* Firefox 滚动条颜色 */
+            max-height: calc(80vh - ${CONFIG.titleBarHeight}px - 100px) !important; /* 进一步减小最大高度，确保不会溢出 */
+            word-wrap: break-word !important; /* 确保长单词换行 */
+            overflow-wrap: break-word !important; /* 现代浏览器的单词换行 */
+            white-space: normal !important; /* 允许正常换行 */
+            display: block !important; /* 确保容器正确显示 */
         }
 
         /* 翻译结果样式 */
@@ -647,6 +549,11 @@ SOFTWARE.
             font-size: ${CONFIG.translationFontSize}px !important;
             line-height: 1.5 !important;
             user-select: text !important;
+            word-wrap: break-word !important; /* 确保长单词换行 */
+            overflow-wrap: break-word !important; /* 现代浏览器的单词换行 */
+            white-space: normal !important; /* 允许正常换行 */
+            max-width: 100% !important; /* 确保不超出容器宽度 */
+            overflow: visible !important; /* 确保内容不被截断 */
         }
 
         /* 深色模式下的源文本样式调整 */
@@ -656,8 +563,8 @@ SOFTWARE.
 
         /* 调整滚动条样式 */
         .translator-panel .translation-container::-webkit-scrollbar {
-            width: 4px !important;
-            height: 4px !important;
+            width: 5px !important; /* 增加滚动条宽度，提高可见性 */
+            height: 5px !important;
         }
 
         .translator-panel .translation-container::-webkit-scrollbar-thumb {
@@ -671,7 +578,7 @@ SOFTWARE.
         }
 
         .translator-panel .translation-container::-webkit-scrollbar-track {
-            background: var(--hover-bg) !important;
+            background: var(--hover-bg) !important; /* 轻微可见的轨道 */
             border-radius: 4px !important;
         }
 
@@ -679,14 +586,15 @@ SOFTWARE.
         .translator-panel .pos-tag,
         .translator-panel .phonetic-item {
             user-select: text !important;
+            margin-bottom: var(--spacing-xs) !important; /* 减少音标项的下边距 */
         }
 
         /* 调整释义块样式 */
         .translator-panel .sense-block {
-            margin: var(--spacing-sm) 0 !important;
-            padding: var(--spacing-sm) 0 !important;
+            margin: var(--spacing-xs) 0 !important; /* 减少上下间距 */
+            padding: var(--spacing-xs) 0 !important; /* 减少上下内边距 */
             display: flex !important;
-            gap: var(--spacing-lg) !important;
+            gap: var(--spacing-md) !important; /* 减少词性标签和释义内容之间的间距 */
             align-items: flex-start !important;
             border-bottom: 1px solid var(--panel-border) !important;
             transition: var(--theme-transition) !important;
@@ -705,7 +613,7 @@ SOFTWARE.
         .phonetic-item {
             display: flex !important;
             align-items: center !important;
-            gap: var(--spacing-sm) !important;
+            gap: var(--spacing-xs) !important; /* 减少间距 */
             color: var(--text-secondary) !important;
             padding: var(--spacing-xs) var(--spacing-sm) !important;
             white-space: nowrap !important;
@@ -761,9 +669,9 @@ SOFTWARE.
             gap: var(--spacing-sm) !important;
             padding: var(--spacing-xs) var(--spacing-lg) !important;
             border-radius: var(--spacing-sm) !important;
-            min-width: 120px !important;
-            max-width: 200px !important;
+            width: fit-content !important; /* 使用fit-content替代固定宽度 */
             margin-right: auto !important;
+            position: relative !important; /* 添加相对定位，作为下拉菜单的参考点 */
         }
 
         .translator-panel .title-wrapper:hover {
@@ -858,25 +766,69 @@ SOFTWARE.
         /* 下拉菜单基础样式 */
         .translator-panel .dropdown-menu {
             position: absolute !important;
+            top: 100% !important; /* 确保下拉菜单在标题栏下方 */
             left: 0 !important;
-            right: 0 !important;
             background: var(--panel-bg) !important;
             border: 1px solid var(--panel-border) !important;
             border-radius: var(--spacing-sm) !important;
             box-shadow: 0 2px 8px var(--panel-shadow) !important;
             padding: var(--spacing-sm) 0 !important;
-            width: auto !important;
+            width: 100% !important;
             min-width: 120px !important;
             max-height: 200px !important;
             overflow-y: auto !important;
-            z-index: 1 !important;
+            z-index: 2147483647 !important; /* 确保下拉菜单显示在最上层 */
             display: none !important;
             transition: var(--theme-transition) !important;
+            scrollbar-width: thin !important; /* Firefox 滚动条样式 */
+            scrollbar-color: var(--text-tertiary) var(--hover-bg) !important; /* Firefox 滚动条颜色 */
+            clip-path: none !important; /* 确保没有裁剪路径 */
+            visibility: visible !important; /* 确保可见性 */
+            opacity: 1 !important; /* 确保不透明 */
+            margin-top: 5px !important; /* 添加顶部间距 */
+        }
+
+        /* 明确移除下拉菜单的三角形 */
+        .translator-panel .dropdown-menu::before,
+        .translator-panel .dropdown-menu::after,
+        .translator-panel .title-wrapper::before,
+        .translator-panel .title-wrapper::after,
+        .translator-panel .title-bar::before,
+        .translator-panel .title-bar::after {
+            display: none !important;
+            content: none !important;
+            border: none !important;
+            clip-path: none !important;
+            background: none !important;
+        }
+
+        /* 下拉菜单滚动条样式 - WebKit 浏览器 */
+        .translator-panel .dropdown-menu::-webkit-scrollbar {
+            width: 3px !important; /* 更细的滚动条 */
+            height: 3px !important;
+        }
+
+        .translator-panel .dropdown-menu::-webkit-scrollbar-thumb {
+            background: var(--text-tertiary) !important;
+            border-radius: 3px !important;
+            transition: background-color 0.2s !important;
+        }
+
+        .translator-panel .dropdown-menu::-webkit-scrollbar-thumb:hover {
+            background: var(--text-secondary) !important;
+        }
+
+        .translator-panel .dropdown-menu::-webkit-scrollbar-track {
+            background: transparent !important; /* 透明轨道，更简约 */
+            border-radius: 3px !important;
         }
 
         /* 下拉菜单显示状态 */
         .translator-panel .dropdown-menu.show {
             display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            z-index: 2147483647 !important;
         }
 
         /* 下拉菜单项样式 */
@@ -993,7 +945,7 @@ SOFTWARE.
         .translator-panel .pos-tags {
             display: flex !important;
             flex-direction: column !important;
-            gap: var(--spacing-xs) !important;
+            gap: var(--spacing-xs) !important; /* 减少词性标签之间的间距 */
             min-width: 35px !important;
             flex-shrink: 0 !important;
             align-items: center !important;
@@ -1026,10 +978,10 @@ SOFTWARE.
 
         /* 调整释义块样式 */
         .translator-panel .sense-block {
-            margin: var(--spacing-sm) 0 !important;
-            padding: var(--spacing-sm) 0 !important;
+            margin: var(--spacing-xs) 0 !important; /* 减少上下间距 */
+            padding: var(--spacing-xs) 0 !important; /* 减少上下内边距 */
             display: flex !important;
-            gap: var(--spacing-lg) !important;
+            gap: var(--spacing-md) !important; /* 减少词性标签和释义内容之间的间距 */
             align-items: flex-start !important;
             border-bottom: 1px solid var(--panel-border) !important;
             transition: var(--theme-transition) !important;
@@ -1038,7 +990,10 @@ SOFTWARE.
         /* 调整词性标签和释义内容的布局 */
         .translator-panel .def-content {
             flex: 1 !important;
-            min-width: 0 !important;
+            min-width: 0 !important; /* 确保flex子项可以收缩 */
+            word-wrap: break-word !important; /* 确保长单词换行 */
+            overflow-wrap: break-word !important; /* 现代浏览器的单词换行 */
+            overflow: visible !important; /* 确保内容不被截断 */
         }
 
         /* 动画效果 */
@@ -1055,11 +1010,11 @@ SOFTWARE.
 
         /* 添加释义发音样式 */
         .translator-panel .sense-phonetic {
-            margin-bottom: var(--spacing-sm) !important;
+            margin-bottom: var(--spacing-xs) !important; /* 减少下边距 */
             opacity: 0.8 !important;
             display: flex !important;
             flex-wrap: wrap !important;
-            gap: var(--spacing-xl) !important;
+            gap: var(--spacing-md) !important; /* 减少间距 */
         }
 
         .translator-panel .sense-phonetic .phonetic-item {
@@ -1071,6 +1026,26 @@ SOFTWARE.
         .translator-panel .sense-phonetic .audio-button {
             font-size: var(--font-lg) !important;
             padding: var(--spacing-xs) !important;
+        }
+
+        /* 添加切换图标样式 */
+        .translator-panel .switch-icon {
+            width: 12px !important;
+            height: 12px !important;
+            margin-left: 4px !important;
+            transition: transform 0.2s !important;
+            display: inline-block !important;
+            vertical-align: middle !important;
+            transform: rotate(0deg) !important;
+        }
+
+        .translator-panel .switch-icon.open {
+            transform: rotate(180deg) !important;
+        }
+
+        /* 确保SVG内部不会显示三角形 */
+        .translator-panel .switch-icon path {
+            fill: currentColor !important;
         }
     `);
 
@@ -1091,22 +1066,17 @@ SOFTWARE.
 
     // 工具函数
     const utils = {
-        // HTML 转义映射
         escapeMap: {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'},
         escapeHtml: text => text.replace(/[&<>"']/g, c => utils.escapeMap[c]),
-
-        // 主题相关
         isDarkMode: () => GM_getValue('darkMode', false),
         toggleDarkMode() {
             const isDark = !GM_getValue('darkMode', false);
             GM_setValue('darkMode', isDark);
-            document.querySelectorAll('.translator-panel').forEach(panel => {
-                panel.classList.toggle(CONFIG.darkModeClass, isDark);
-                panel.querySelector('.theme-button').className = `theme-button ${isDark ? 'dark' : 'light'}`;
+            document.querySelectorAll('.translator-panel').forEach(p => {
+                p.classList.toggle(CONFIG.darkModeClass, isDark);
+                p.querySelector('.theme-button').className = `theme-button ${isDark ? 'dark' : 'light'}`;
             });
         },
-
-        // 防抖函数
         debounce(fn, delay) {
             let timer;
             return (...args) => {
@@ -1114,159 +1084,98 @@ SOFTWARE.
                 timer = setTimeout(() => fn.apply(this, args), delay);
             };
         },
-
-        // 事件处理
         addEventHandler(element, eventType, handler, options = {}) {
             if (!element || !eventType || !handler) return;
-
-            // 先移除旧的事件处理器
-            if (element[`${eventType}Handler`]) {
-                element.removeEventListener(eventType, element[`${eventType}Handler`]);
-            }
-
-            // 保存新的事件处理器引用
+            if (element[`${eventType}Handler`]) element.removeEventListener(eventType, element[`${eventType}Handler`], options);
             element[`${eventType}Handler`] = handler;
-
-            // 添加新的事件处理器
             element.addEventListener(eventType, handler, options);
         },
-
-        removeEventHandler(element, eventType) {
+        removeEventHandler(element, eventType, options = {}) {
             if (!element || !eventType) return;
-
-            const handler = element[`${eventType}Handler`];
-            if (handler) {
-                element.removeEventListener(eventType, handler);
+            if (element[`${eventType}Handler`]) {
+                element.removeEventListener(eventType, element[`${eventType}Handler`], options);
                 delete element[`${eventType}Handler`];
             }
         },
-
         removeAllEventHandlers(element) {
             if (!element) return;
-
-            const eventTypes = ['click', 'mousedown', 'mouseup', 'mousemove', 'mouseleave', 'mouseenter'];
-            eventTypes.forEach(eventType => this.removeEventHandler(element, eventType));
+            const eventTypes = ['click', 'mousedown', 'mouseup', 'mousemove', 'contextmenu'];
+            eventTypes.forEach(type => utils.removeEventHandler(element, type, {capture: true}));
+            eventTypes.forEach(type => utils.removeEventHandler(element, type, {capture: false}));
         },
-
-        // DOM 操作
         createElement(tag, attributes = {}, children = []) {
             const element = document.createElement(tag);
-            Object.entries(attributes).forEach(([key, value]) =>
-                key === 'style' && typeof value === 'object' ?
-                    Object.assign(element.style, value) :
-                    element.setAttribute(key, value)
-            );
-            children.forEach(child => element.appendChild(
-                typeof child === 'string' ? document.createTextNode(child) : child
-            ));
+            Object.entries(attributes).forEach(([k, v]) => k === 'style' && typeof v === 'object' ? Object.assign(element.style, v) : element.setAttribute(k, v));
+            children.forEach(child => element.appendChild(typeof child === 'string' ? document.createTextNode(child) : child));
             return element;
         },
-
-        // 错误处理
         setError(message, targetPanel) {
             const content = targetPanel?.querySelector('.content');
             if (content) content.innerHTML = `<div class="error">${message}</div>`;
         },
-
-        // 面板显示
         showPanel(x, y, targetPanel = panel) {
             if (targetPanel.style.display === 'block') {
                 targetPanel.classList.add('show');
                 return;
             }
-
             const {innerWidth: vw, innerHeight: vh} = window;
             const {pageXOffset: sx, pageYOffset: sy} = window;
             const spacing = CONFIG.panelSpacing;
-
-            // 计算面板的水平位置
-            const panelX = Math.max(
-                spacing + sx,
-                Math.min(sx + vw - CONFIG.panelWidth - spacing, x)
-            );
-
-            // 计算可用的最大高度
-            const maxAvailableHeight = Math.min(
-                CONFIG.maxPanelHeight,
-                vh - 2 * spacing // 减去上下间距
-            );
-
-            // 更新配置中的实际最大高度
+            const panelWidth = CONFIG.panelWidth;
+            const panelX = Math.max(spacing + sx, Math.min(sx + vw - panelWidth - spacing, x));
+            const maxAvailableHeight = Math.min(CONFIG.maxPanelHeight, vh - 2 * spacing);
             const actualMaxHeight = maxAvailableHeight;
-            const contentMaxHeight = actualMaxHeight - CONFIG.titleBarHeight - 2 * CONFIG.panelSpacing;
-
-            // 计算面板的垂直位置
+            const contentMaxHeight = actualMaxHeight - CONFIG.titleBarHeight - CONFIG.panelSpacing;
             const spaceBelow = vh - (y - sy);
-            const spaceAbove = y - sy;
-
-            // 确定面板显示位置（上方或下方）
-            const panelY = spaceBelow >= actualMaxHeight || spaceBelow >= spaceAbove ?
-                // 显示在下方
-                Math.min(y + spacing, sy + vh - actualMaxHeight - spacing) :
-                // 显示在上方
+            const minRequiredSpace = CONFIG.titleBarHeight + 100;
+            const panelY = spaceBelow >= minRequiredSpace ? 
+                Math.min(y + spacing, sy + vh - actualMaxHeight - spacing) : 
                 Math.max(sy + spacing, y - actualMaxHeight - spacing);
-
-            // 设置面板样式
+            
             Object.assign(targetPanel.style, {
-                position: 'absolute',
-                left: `${panelX}px`,
-                top: `${panelY}px`,
+                position: 'fixed',
+                left: `${panelX - sx}px`,
+                top: `${panelY - sy}px`,
                 maxHeight: `${actualMaxHeight}px`,
-                display: 'block'
+                display: 'block',
+                zIndex: '2147483647'
             });
-
-            // 设置内容区域的最大高度
+            
+            targetPanel.dataset.initialX = panelX - sx;
+            targetPanel.dataset.initialY = panelY - sy;
+            
             const content = targetPanel.querySelector('.content');
-            if (content) {
-                content.style.maxHeight = `${contentMaxHeight}px`;
-            }
-
+            if (content) content.style.maxHeight = `${contentMaxHeight}px`;
+            
             targetPanel.classList.toggle(CONFIG.darkModeClass, this.isDarkMode());
             setTimeout(() => targetPanel.classList.add('show'), 50);
         },
-
-        // 面板隐藏
         hidePanel(targetPanel = panel) {
             if (!targetPanel || state.pinnedPanels.has(targetPanel)) return;
             targetPanel.classList.remove('show');
             setTimeout(() => {
-                if (!targetPanel.classList.contains('show')) {
-                    targetPanel.style.display = 'none';
-                }
+                if (!targetPanel.classList.contains('show')) targetPanel.style.display = 'none';
             }, CONFIG.animationDuration);
             if (targetPanel === state.activePanel) state.activePanel = null;
         },
-
-        // 元素检查
-        isInvalidElement: element => {
+        isInvalidElement: e => {
             try {
-                return element && element instanceof Element && (
-                    ['INPUT', 'TEXTAREA', 'SELECT', 'OPTION'].includes(element.tagName) ||
-                element.isContentEditable ||
-                    element.closest('[contenteditable]')
-                );
+                return e && e instanceof Element && (['INPUT', 'TEXTAREA', 'SELECT', 'OPTION'].includes(e.tagName) || e.isContentEditable || e.closest('[contenteditable]'));
             } catch (error) {
                 console.error('检查元素有效性时出错:', error);
                 return false;
             }
         },
-
-        // 文本检查
         isTranslatable(text) {
-            const trimmedText = text.trim().replace(/\s+/g, '');
-            if (!trimmedText) return false;
-            if (/[a-zA-Z]/.test(trimmedText)) return true;
-
+            const t = text.trim().replace(/\s+/g, '');
+            if (!t) return false;
+            if (/[a-zA-Z]/.test(t)) return true;
             const chinesePattern = /[\u4e00-\u9fff]/;
             const nonChinesePattern = /[^\u4e00-\u9fff\d\s\p{P}\p{S}]/u;
-
-            if (chinesePattern.test(trimmedText) && !nonChinesePattern.test(trimmedText)) return false;
-            if (/^[\d\s\p{P}\p{S}]+$/u.test(trimmedText)) return false;
-
+            if (chinesePattern.test(t) && !nonChinesePattern.test(t)) return false;
+            if (/^[\d\s\p{P}\p{S}]+$/u.test(t)) return false;
             return true;
         },
-
-        // 面板管理
         createNewPanel() {
             const newPanel = panel.cloneNode(true);
             newPanel.style.display = 'none';
@@ -1275,60 +1184,38 @@ SOFTWARE.
             setupPanelEvents(newPanel);
             return newPanel;
         },
-
         getOrCreatePanel() {
-            if (state.activePanel && !state.pinnedPanels.has(state.activePanel)) {
-                return state.activePanel;
-            }
-
-            const availablePanel = Array.from(state.allPanels)
-                .find(panel => !state.pinnedPanels.has(panel) && panel.style.display !== 'block');
-
+            if (state.activePanel && !state.pinnedPanels.has(state.activePanel)) return state.activePanel;
+            const availablePanel = Array.from(state.allPanels).find(p => !state.pinnedPanels.has(p) && p.style.display !== 'block');
             if (availablePanel) {
                 state.activePanel = availablePanel;
                 return availablePanel;
             }
-
             state.activePanel = this.createNewPanel();
             return state.activePanel;
         },
-
-        // 点击检查
         isClickInPanel: e => e.target.closest('.translator-panel') !== null,
-
-        // 选择触发控制
         preventSelectionTrigger() {
             state.ignoreNextSelection = true;
-            setTimeout(() => {
-                state.ignoreNextSelection = false;
-            }, 100);
+            setTimeout(() => state.ignoreNextSelection = false, 100);
         },
-
-        // 翻译器状态更新
         updateAllPanels(newTranslator, isDefaultUpdate = false) {
             const defaultTranslator = GM_getValue('defaultTranslator', 'google');
-
-            // 只在非默认更新时才更改当前翻译器
-            if (!isDefaultUpdate) {
-                CONFIG.currentTranslator = newTranslator;
-            }
-
-            document.querySelectorAll('.translator-panel').forEach(panel => {
-                // 只在非默认更新时才更改标题
-                if (!isDefaultUpdate) {
-                panel.querySelector('.title').textContent = TRANSLATORS[newTranslator].name;
-                }
-
-                panel.querySelectorAll('.dropdown-item').forEach(item => {
+            if (!isDefaultUpdate) CONFIG.currentTranslator = newTranslator;
+            
+            document.querySelectorAll('.translator-panel').forEach(p => {
+                if (!isDefaultUpdate) p.querySelector('.title').textContent = TRANSLATORS[newTranslator].name;
+                
+                p.querySelectorAll('.dropdown-item').forEach(item => {
                     const key = item.dataset.translator;
                     const isDefault = key === defaultTranslator;
                     const isActive = key === CONFIG.currentTranslator;
-
+                    
                     item.className = `dropdown-item${isActive ? ' active' : ''}${isDefault ? ' is-default' : ''}`;
-
+                    
                     const nameSpan = item.querySelector('.translator-name');
                     if (nameSpan) nameSpan.innerHTML = `${isActive ? '✓ ' : ''}${TRANSLATORS[key].name}`;
-
+                    
                     const defaultSpan = item.querySelector('.set-default');
                     if (defaultSpan) {
                         defaultSpan.textContent = isDefault ? '默认' : '设为默认';
@@ -1340,15 +1227,9 @@ SOFTWARE.
                 });
             });
         },
-
-        // 面板清理
         cleanupPanel(targetPanel) {
             if (!targetPanel) return;
-
-            // 移除所有事件监听器
-            utils.removeAllEventHandlers(targetPanel);
-
-            // 从 DOM 中移除面板
+            this.removeAllEventHandlers(targetPanel);
             targetPanel.remove();
         }
     };
@@ -1360,28 +1241,17 @@ SOFTWARE.
             throw new Error('翻译参数无效');
         }
 
-        const textToTranslate = text.replace(/\n\s*\n/g, '\n\n')
-                                .replace(/\s*\n\s*/g, '\n')
-                                .trim();
-
-        if (!textToTranslate) {
-            throw new Error('翻译文本为空');
-        }
+        const textToTranslate = text.replace(/\n\s*\n/g, '\n\n').replace(/\s*\n\s*/g, '\n').trim();
+        if (!textToTranslate) throw new Error('翻译文本为空');
 
         const translator = TRANSLATORS[CONFIG.currentTranslator];
-        if (!translator) {
-            throw new Error('未找到指定的翻译器');
-        }
+        if (!translator) throw new Error('未找到指定的翻译器');
 
         const formattedTranslation = await translator.translate(textToTranslate);
-        if (!formattedTranslation) {
-            throw new Error('翻译结果为空');
-        }
+        if (!formattedTranslation) throw new Error('翻译结果为空');
 
         const content = targetPanel.querySelector('.content');
-        if (!content) {
-            throw new Error('未找到内容容器元素');
-        }
+        if (!content) throw new Error('未找到内容容器元素');
 
         content.innerHTML = `
             <div class="source-text-container">
@@ -1391,31 +1261,26 @@ SOFTWARE.
                 <div class="translation">${formattedTranslation}</div>
             </div>`;
 
-        // 添加音频按钮点击事件
         try {
-            targetPanel.querySelectorAll('.audio-button').forEach(button => {
-                button.addEventListener('click', async (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const url = button.getAttribute('data-url');
+            targetPanel.querySelectorAll('.audio-button').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    const url = btn.getAttribute('data-url');
                     if (url) {
                         try {
-                            // 阻止选择触发
                             utils.preventSelectionTrigger();
-                            // 重置选择状态
                             state.isSelectingInPanel = false;
                             state.selectingPanel = null;
-                            // 播放音频
                             await audio.play(url);
-                        } catch (error) {
-                            console.error('播放音频失败:', error);
+                        } catch (err) {
+                            console.error('播放音频失败:', err);
                             utils.setError('音频播放失败', targetPanel);
                         }
                     }
                 });
             });
-        } catch (error) {
-            console.error('添加音频按钮事件失败:', error);
+        } catch (err) {
+            console.error('添加音频按钮事件失败:', err);
         }
 
         targetPanel.classList.add('show');
@@ -1425,22 +1290,19 @@ SOFTWARE.
     function createTranslatorPanel() {
         const panel = document.createElement('div');
         panel.className = 'translator-panel';
-        panel.innerHTML = `
-            <div class="title-bar">
-                <div class="title-wrapper">
-                    <span class="title">${TRANSLATORS[CONFIG.currentTranslator].name}</span>
-                    <span class="switch-text">（点击切换）</span>
-                    <svg class="switch-icon" viewBox="0 0 1024 1024">
-                        <path fill="currentColor" d="M884 256h-75c-5.1 0-9.9 2.5-12.9 6.6L512 654.2 227.9 262.6c-3-4.1-7.8-6.6-12.9-6.6h-75c-6.5 0-10.3 7.4-6.5 12.7l352.6 486.1c12.8 17.6 39 17.6 51.7 0l352.6-486.1c3.9-5.3.1-12.7-6.4-12.7z"/>
-                    </svg>
-                </div>
-                <div class="external-button" title="在新窗口打开翻译"></div>
-                <div class="pin-button unpinned" title="固定窗口"></div>
-                <div class="theme-button light" title="切换深色模式"></div>
-                <div class="clear-button" title="关闭所有窗口"></div>
+        panel.innerHTML = `<div class="title-bar">
+            <div class="title-wrapper">
+                <span class="title">${TRANSLATORS[CONFIG.currentTranslator].name}</span>
+                <span class="switch-text">（点击切换）</span>
+                <svg class="switch-icon" viewBox="0 0 1024 1024"><path fill="currentColor" d="M884 256h-75c-5.1 0-9.9 2.5-12.9 6.6L512 654.2 227.9 262.6c-3-4.1-7.8-6.6-12.9-6.6h-75c-6.5 0-10.3 7.4-6.5 12.7l352.6 486.1c12.8 17.6 39 17.6 51.7 0l352.6-486.1c3.9-5.3.1-12.7-6.4-12.7z"/></svg>
+                <div class="dropdown-menu"></div>
             </div>
-            <div class="dropdown-menu"></div>
-            <div class="content"></div>`;
+            <div class="external-button" title="在新窗口打开翻译"></div>
+            <div class="pin-button unpinned" title="固定窗口"></div>
+            <div class="theme-button light" title="切换深色模式"></div>
+            <div class="clear-button" title="关闭所有窗口"></div>
+        </div>
+        <div class="content"></div>`;
 
         setupPanelEvents(panel);
         return panel;
@@ -1501,113 +1363,72 @@ SOFTWARE.
 
     // 事件处理器
     const eventHandlers = {
-        // 处理鼠标按下
         handleMouseDown(e) {
-            // 如果正在面板内选择，不处理外部事件
             if (state.isSelectingInPanel) {
-                e.stopPropagation();
-                e.preventDefault();
+                e.stopPropagation(); e.preventDefault();
                 return;
             }
-
-            // 如果是右键点击，设置状态
             if (e.button === 2) {
                 state.isRightClickPending = true;
                 return;
             }
-
             const now = Date.now();
-            // 重置点击计数器（如果距离上次点击超过200ms）
-            if (now - state.lastClickTime > 300) {
-                state.clickCount = 0;
-            }
+            if (now - state.lastClickTime > 250) state.clickCount = 0;
             state.clickCount++;
             state.lastClickTime = now;
-
-            // 如果是三连击，阻止接下来的选择触发
-            if (state.clickCount >= 3) {
-                utils.preventSelectionTrigger();
-            }
+            if (state.clickCount >= 3) utils.preventSelectionTrigger();
         },
 
-        // 处理鼠标释放
         handleMouseUp(e) {
-            // 如果正在面板内选择，不处理外部事件
             if (state.isSelectingInPanel) {
-                e.stopPropagation();
-                e.preventDefault();
+                e.stopPropagation(); e.preventDefault();
                 return;
             }
-
-            // 如果是右键点击后的左键点击，直接隐藏非固定面板
             if (state.isRightClickPending && e.button === 0) {
-                document.querySelectorAll('.translator-panel:not(.pinned)').forEach(panel => {
-                    utils.hidePanel(panel);
-                });
+                document.querySelectorAll('.translator-panel:not(.pinned)').forEach(p => utils.hidePanel(p));
                 state.isRightClickPending = false;
                 utils.preventSelectionTrigger();
                 return;
             }
-
-            // 重置右键状态
             if (e.button === 2) {
                 state.isRightClickPending = false;
                 return;
             }
-
             if (utils.isClickInPanel(e) || state.isDragging) {
                 utils.preventSelectionTrigger();
                 return;
             }
-
             handleSelection(e);
         },
 
-        // 处理面板外点击
         handleOutsideClick(e) {
-            // 如果正在面板内选择，不处理外部事件
             if (state.isSelectingInPanel) {
-                e.stopPropagation();
-                e.preventDefault();
+                e.stopPropagation(); e.preventDefault();
                 return;
             }
-
-            // 如果是右键点击后的左键点击，不处理
-            if (state.isRightClickPending) {
-                return;
-            }
-
-            if (state.isDragging || utils.isClickInPanel(e)) return;
-
-            // 隐藏所有非固定的面板
-            document.querySelectorAll('.translator-panel:not(.pinned)')
-                .forEach(panel => {
-                    panel.classList.remove('show');
-                    setTimeout(() => {
-                        if (!panel.classList.contains('show')) {
-                            panel.style.display = 'none';
-                            // 如果不是主面板且没有固定，则移除
-                            if (panel !== currentPanel && !panel.classList.contains('pinned')) {
-                                panel.remove();
-                            }
-                        }
-                    }, CONFIG.animationDuration);
-                });
+            if (state.isRightClickPending || state.isDragging || utils.isClickInPanel(e)) return;
+            
+            document.querySelectorAll('.translator-panel:not(.pinned)').forEach(p => {
+                p.classList.remove('show');
+                setTimeout(() => {
+                    if (!p.classList.contains('show')) {
+                        p.style.display = 'none';
+                        if (p !== currentPanel && !p.classList.contains('pinned')) p.remove();
+                    }
+                }, CONFIG.animationDuration);
+            });
         }
     };
 
     // 注册事件监听器
-    document.addEventListener('mousedown', eventHandlers.handleMouseDown, true);
-    document.addEventListener('mouseup', eventHandlers.handleMouseUp, true);
-    document.addEventListener('click', eventHandlers.handleOutsideClick, true);
+    document.addEventListener('mousedown', eventHandlers.handleMouseDown, {capture: true, passive: false});
+    document.addEventListener('mouseup', eventHandlers.handleMouseUp, {capture: true, passive: false});
+    document.addEventListener('click', eventHandlers.handleOutsideClick, {capture: true, passive: false});
 
     // 添加右键菜单事件处理
-    document.addEventListener('contextmenu', (e) => {
-        // 如果不是在翻译面板内，设置右键状态
-        if (!e.target.closest('.translator-panel')) {
-            state.isRightClickPending = true;
-        }
-    });
+    document.addEventListener('contextmenu', e => {
+        if (!e.target.closest('.translator-panel')) state.isRightClickPending = true;
+    }, {passive: false});
 
     // 处理翻译器切换
     function setupTranslatorSwitch(targetPanel) {
@@ -1616,54 +1437,36 @@ SOFTWARE.
         const dropdownMenu = targetPanel.querySelector('.dropdown-menu');
         targetPanel.isDropdownOpen = false;
 
-        // 更新下拉菜单HTML
         function updateDropdownMenu() {
             const defaultTranslator = GM_getValue('defaultTranslator', 'google');
             dropdownMenu.innerHTML = Object.entries(TRANSLATORS)
-                .map(([key, translator]) => `
-                    <div class="dropdown-item${key === CONFIG.currentTranslator ? ' active' : ''}${key === defaultTranslator ? ' is-default' : ''}"
-                        data-translator="${key}">
-                        <span class="translator-name">
-                            ${key === CONFIG.currentTranslator ? '✓ ' : ''}${translator.name}
-                        </span>
-                        <span class="set-default" title="设为默认翻译器">设为默认</span>
-                    </div>
-                `).join('');
+                .map(([key, translator]) => `<div class="dropdown-item${key === CONFIG.currentTranslator ? ' active' : ''}${key === defaultTranslator ? ' is-default' : ''}" data-translator="${key}">
+                    <span class="translator-name">${key === CONFIG.currentTranslator ? '✓ ' : ''}${translator.name}</span>
+                    <span class="set-default" title="设为默认翻译器">设为默认</span>
+                </div>`).join('');
         }
 
         const toggleDropdown = (show) => {
             if (show === targetPanel.isDropdownOpen) return;
-
             targetPanel.isDropdownOpen = show;
             switchIcon.classList.toggle('open', show);
 
             if (show) {
                 updateDropdownMenu();
                 dropdownMenu.classList.add('show');
-
-                // 检查面板在视口中的位置
-                const panelRect = targetPanel.getBoundingClientRect();
-                const spaceAbove = panelRect.top;
-                const spaceBelow = window.innerHeight - panelRect.bottom;
-                const menuHeight = dropdownMenu.offsetHeight || 100;
-
-                const shouldDropDown = spaceAbove < menuHeight && spaceBelow > menuHeight;
-                dropdownMenu.style.cssText = shouldDropDown ? `
-                    bottom: auto !important;
-                    top: calc(100% + 1px) !important;
-                    transform-origin: top !important;
-                    border-radius: 4px !important;
-                    margin: 0 !important;
-                ` : `
-                    top: auto !important;
-                    bottom: calc(100% + 1px) !important;
-                    transform-origin: bottom !important;
-                    border-radius: 4px !important;
-                    margin: 0 !important;
-                `;
+                // 强制重绘
+                dropdownMenu.style.display = 'block';
+                dropdownMenu.style.visibility = 'visible';
+                dropdownMenu.style.opacity = '1';
+                dropdownMenu.style.zIndex = '2147483647';
+                
+                // 简化定位逻辑
+                dropdownMenu.style.top = '100%';
+                dropdownMenu.style.left = '0';
+                dropdownMenu.style.width = '100%';
+                dropdownMenu.style.marginTop = '5px';
             } else {
                 dropdownMenu.classList.remove('show');
-                // 等待过渡动画完成后清空内容
                 setTimeout(() => {
                     if (!targetPanel.isDropdownOpen) {
                         dropdownMenu.innerHTML = '';
@@ -1672,6 +1475,45 @@ SOFTWARE.
                 }, 150);
             }
         };
+
+        // 点击标题栏切换下拉菜单
+        utils.addEventHandler(titleWrapper, 'click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleDropdown(!targetPanel.isDropdownOpen);
+        }, {passive: false});
+
+        // 点击面板任何地方关闭下拉菜单
+        utils.addEventHandler(targetPanel, 'click', (e) => {
+            if (!e.target.closest('.title-wrapper') && targetPanel.isDropdownOpen) {
+                toggleDropdown(false);
+            }
+        }, {passive: false});
+
+        // 点击下拉菜单项切换翻译器
+        utils.addEventHandler(dropdownMenu, 'click', (e) => {
+            e.stopPropagation(); // 阻止事件冒泡
+            const item = e.target.closest('.dropdown-item');
+            if (!item) return;
+
+            const translator = item.dataset.translator;
+            if (translator) {
+                if (e.target.closest('.set-default')) {
+                    GM_setValue('defaultTranslator', translator);
+                    updateDropdownMenu();
+                } else {
+                    CONFIG.currentTranslator = translator;
+                    const switchText = targetPanel.querySelector('.switch-text');
+                    switchText.textContent = TRANSLATORS[translator].name;
+                    toggleDropdown(false);
+
+                    // 如果有当前文本，重新翻译
+                    if (state.currentText) {
+                        translate(state.currentText, targetPanel);
+                    }
+                }
+            }
+        }, {passive: false});
 
         // 移除旧的事件监听器
         titleWrapper.removeEventListener('click', titleWrapper.clickHandler);
@@ -1744,8 +1586,7 @@ SOFTWARE.
 
     // 处理固定按钮点击
     function handlePinClick(e, targetPanel) {
-        e.preventDefault();
-        e.stopPropagation();
+        e.preventDefault(); e.stopPropagation();
         utils.preventSelectionTrigger();
 
         const pinButton = e.target;
@@ -1773,7 +1614,6 @@ SOFTWARE.
         const isPinned = state.pinnedPanels.has(targetPanel);
         pinButton.className = `pin-button ${isPinned ? 'pinned' : 'unpinned'}`;
         pinButton.title = isPinned ? '取消固定' : '固定窗口';
-
         utils.addEventHandler(pinButton, 'click', (e) => handlePinClick(e, targetPanel));
 
         // 初始化主题按钮状态和事件
@@ -1784,20 +1624,16 @@ SOFTWARE.
         targetPanel.classList.toggle(CONFIG.darkModeClass, isDark);
 
         utils.addEventHandler(themeButton, 'click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+            e.preventDefault(); e.stopPropagation();
             utils.toggleDarkMode();
-            // 更新主题按钮的提示文本
             document.querySelectorAll('.translator-panel .theme-button').forEach(btn => {
                 btn.title = btn.classList.contains('dark') ? '切换亮色模式' : '切换深色模式';
             });
         });
 
         // 初始化清除按钮事件
-        const clearButton = targetPanel.querySelector('.clear-button');
-        utils.addEventHandler(clearButton, 'click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+        utils.addEventHandler(targetPanel.querySelector('.clear-button'), 'click', (e) => {
+            e.preventDefault(); e.stopPropagation();
             utils.preventSelectionTrigger();
 
             // 重置选择状态
@@ -1805,20 +1641,12 @@ SOFTWARE.
             state.selectingPanel = null;
             document.body.style.userSelect = '';
 
-            // 关闭所有翻译窗口，包括固定的和当前窗口
-            const panels = Array.from(document.querySelectorAll('.translator-panel'));
-            panels.forEach(panel => {
-                // 先从固定面板集合中移除
+            // 关闭所有翻译窗口
+            Array.from(document.querySelectorAll('.translator-panel')).forEach(panel => {
                 state.pinnedPanels.delete(panel);
-                // 移除固定状态的类名
-                panel.classList.remove('pinned');
-                // 移除显示状态的类名
-                panel.classList.remove('show');
-                // 移除事件监听器
+                panel.classList.remove('pinned', 'show');
                 utils.removeAllEventHandlers(panel);
-                // 从状态管理中移除
                 state.allPanels.delete(panel);
-                // 从DOM中移除
                 panel.remove();
             });
 
@@ -1834,7 +1662,7 @@ SOFTWARE.
             state.ignoreNextSelection = false;
             state.isRightClickPending = false;
 
-            // 重新创建主面板（但保持隐藏状态）
+            // 重新创建主面板
             const newPanel = createTranslatorPanel();
             document.body.appendChild(newPanel);
             state.allPanels.add(newPanel);
@@ -1844,12 +1672,9 @@ SOFTWARE.
         // 添加面板内选择事件处理
         utils.addEventHandler(targetPanel, 'mousedown', (e) => {
             if (e.target.closest('.audio-button')) return;
-
             if (e.target.closest('.content')) {
-                const selection = window.getSelection();
                 const now = Date.now();
-
-                if (now - state.lastClickTime < 300) {
+                if (now - state.lastClickTime < 250) {
                     state.clickCount++;
                     if (state.clickCount >= 3) {
                         state.lastClickTime = now;
@@ -1859,15 +1684,12 @@ SOFTWARE.
                     state.clickCount = 1;
                 }
                 state.lastClickTime = now;
-
-                // 开始选择
                 state.isSelectingInPanel = true;
                 state.selectingPanel = targetPanel;
                 document.body.style.userSelect = 'none';
-
                 e.stopPropagation();
             }
-        });
+        }, {passive: false});
 
         // 添加右键菜单事件处理
         utils.addEventHandler(targetPanel, 'contextmenu', (e) => {
@@ -1876,21 +1698,15 @@ SOFTWARE.
                 e.stopPropagation();
                 return;
             }
-            // 如果没有选中文本，关闭所有未固定的面板
-            e.preventDefault();
-            e.stopPropagation();
-            document.querySelectorAll('.translator-panel:not(.pinned)').forEach(panel => {
-                utils.hidePanel(panel);
-            });
-        });
+            e.preventDefault(); e.stopPropagation();
+            document.querySelectorAll('.translator-panel:not(.pinned)').forEach(p => utils.hidePanel(p));
+        }, {passive: false});
 
-        utils.addEventHandler(targetPanel, 'mousemove', (e) => {
-            if (state.isSelectingInPanel) {
-                e.stopPropagation();
-            }
-        });
+        utils.addEventHandler(targetPanel, 'mousemove', e => {
+            if (state.isSelectingInPanel) e.stopPropagation();
+        }, {passive: false});
 
-        utils.addEventHandler(targetPanel, 'mouseup', (e) => {
+        utils.addEventHandler(targetPanel, 'mouseup', e => {
             if (state.isSelectingInPanel) {
                 state.isSelectingInPanel = false;
                 state.selectingPanel = null;
@@ -1898,83 +1714,82 @@ SOFTWARE.
                 e.stopPropagation();
                 utils.preventSelectionTrigger();
             }
-        });
+        }, {passive: false});
 
         // 添加全局鼠标抬起事件处理
-        const handleGlobalMouseUp = (e) => {
+        utils.addEventHandler(document, 'mouseup', e => {
             if (state.isSelectingInPanel) {
                 state.isSelectingInPanel = false;
                 state.selectingPanel = null;
                 document.body.style.userSelect = '';
-                e.stopPropagation();
-                e.preventDefault();
+                e.stopPropagation(); e.preventDefault();
                 utils.preventSelectionTrigger();
             }
-        };
-
-        utils.addEventHandler(document, 'mouseup', handleGlobalMouseUp, { capture: true });
+        }, { capture: true, passive: false });
 
         // 标题栏拖动功能
         const titleBar = targetPanel.querySelector('.title-bar');
-        let startX = 0;
-        let startY = 0;
-        let startLeft = 0;
-        let startTop = 0;
+        targetPanel.dataset.dragInfo = JSON.stringify({startX: 0, startY: 0, startLeft: 0, startTop: 0});
 
-        const handleDragStart = (e) => {
+        const handleDragStart = e => {
             if (!e.target.closest('.title-bar')) return;
-
             state.isDragging = true;
             state.dragTarget = targetPanel;
-            startX = e.clientX;
-            startY = e.clientY;
-            startLeft = parseInt(targetPanel.style.left);
-            startTop = parseInt(targetPanel.style.top);
-
-            utils.addEventHandler(document, 'mousemove', handleDragMove);
-            utils.addEventHandler(document, 'mouseup', handleDragEnd);
-
-            e.preventDefault();
-            e.stopPropagation();
+            
+            const dragInfo = {
+                startX: e.clientX,
+                startY: e.clientY,
+                startLeft: parseFloat(targetPanel.style.left) || 0,
+                startTop: parseFloat(targetPanel.style.top) || 0
+            };
+            targetPanel.dataset.dragInfo = JSON.stringify(dragInfo);
+            
+            targetPanel.classList.add('dragging');
+            utils.addEventHandler(document, 'mousemove', handleDragMove, {passive: false});
+            utils.addEventHandler(document, 'mouseup', handleDragEnd, {passive: false});
+            e.preventDefault(); e.stopPropagation();
         };
 
-        const handleDragMove = (e) => {
+        const handleDragMove = e => {
             if (!state.isDragging || state.dragTarget !== targetPanel) return;
-
-            const dx = e.clientX - startX;
-            const dy = e.clientY - startY;
-
+            
+            const dragInfo = JSON.parse(targetPanel.dataset.dragInfo);
+            const dx = e.clientX - dragInfo.startX;
+            const dy = e.clientY - dragInfo.startY;
+            
             const viewportWidth = window.innerWidth;
             const viewportHeight = window.innerHeight;
+            const currentPanelWidth = targetPanel.offsetWidth;
+            const currentPanelHeight = targetPanel.offsetHeight;
+            const minVisiblePart = CONFIG.titleBarHeight;
+
             const newX = Math.max(
-                CONFIG.panelSpacing,
-                Math.min(viewportWidth - targetPanel.offsetWidth - CONFIG.panelSpacing,
-                        startLeft + dx)
+                -currentPanelWidth + minVisiblePart,
+                Math.min(viewportWidth - minVisiblePart, dragInfo.startLeft + dx)
             );
             const newY = Math.max(
-                CONFIG.panelSpacing,
-                Math.min(viewportHeight - targetPanel.offsetHeight - CONFIG.panelSpacing,
-                        startTop + dy)
+                0,
+                Math.min(viewportHeight - minVisiblePart, dragInfo.startTop + dy)
             );
 
             targetPanel.style.left = `${newX}px`;
             targetPanel.style.top = `${newY}px`;
-
-            e.preventDefault();
-            e.stopPropagation();
+            e.preventDefault(); e.stopPropagation();
         };
 
-        const handleDragEnd = (e) => {
+        const handleDragEnd = e => {
             if (!state.isDragging || state.dragTarget !== targetPanel) return;
-
+            
             state.isDragging = false;
             state.dragTarget = null;
-
+            targetPanel.classList.remove('dragging');
+            
             utils.removeEventHandler(document, 'mousemove');
             utils.removeEventHandler(document, 'mouseup');
-
-            // 只有在位置真的变化时才自动固定面板
-            if (startLeft !== parseInt(targetPanel.style.left) || startTop !== parseInt(targetPanel.style.top)) {
+            
+            const dragInfo = JSON.parse(targetPanel.dataset.dragInfo);
+            if (Math.abs(dragInfo.startLeft - parseFloat(targetPanel.style.left)) > 5 ||
+                Math.abs(dragInfo.startTop - parseFloat(targetPanel.style.top)) > 5) {
                 if (!state.pinnedPanels.has(targetPanel)) {
                     const pinButton = targetPanel.querySelector('.pin-button');
                     pinButton.className = 'pin-button pinned';
@@ -1983,42 +1798,31 @@ SOFTWARE.
                     state.pinnedPanels.add(targetPanel);
                 }
             }
-
+            
             if (e) {
-                e.preventDefault();
-                e.stopPropagation();
+                e.preventDefault(); e.stopPropagation();
             }
         };
 
-        utils.addEventHandler(targetPanel, 'mousedown', handleDragStart);
+        utils.addEventHandler(targetPanel, 'mousedown', handleDragStart, {passive: false});
 
         // 初始化外部链接按钮事件
-        const externalButton = targetPanel.querySelector('.external-button');
-        utils.addEventHandler(externalButton, 'click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+        utils.addEventHandler(targetPanel.querySelector('.external-button'), 'click', e => {
+            e.preventDefault(); e.stopPropagation();
             utils.preventSelectionTrigger();
 
             const text = state.currentText;
             if (!text) return;
 
-            let url;
-            switch (CONFIG.currentTranslator) {
-                case 'google':
-                    url = `https://translate.google.com/?sl=auto&tl=zh-CN&text=${encodeURIComponent(text)}`;
-                    break;
-                case 'youdao':
-                    url = `https://dict.youdao.com/w/${encodeURIComponent(text)}`;
-                    break;
-                case 'cambridge':
-                    url = `https://dictionary.cambridge.org/dictionary/english-chinese-simplified/${encodeURIComponent(text)}`;
-                    break;
-            }
-
-            if (url) {
-                window.open(url, '_blank');
-            }
-        });
+            const urls = {
+                'google': `https://translate.google.com/?sl=auto&tl=zh-CN&text=${encodeURIComponent(text)}`,
+                'youdao': `https://dict.youdao.com/w/${encodeURIComponent(text)}`,
+                'cambridge': `https://dictionary.cambridge.org/dictionary/english-chinese-simplified/${encodeURIComponent(text)}`
+            };
+            
+            const url = urls[CONFIG.currentTranslator];
+            if (url) window.open(url, '_blank');
+        }, {passive: false});
     }
 
     // 创建主翻译面板
@@ -2032,13 +1836,13 @@ SOFTWARE.
                 <svg class="switch-icon" viewBox="0 0 1024 1024">
                     <path fill="currentColor" d="M884 256h-75c-5.1 0-9.9 2.5-12.9 6.6L512 654.2 227.9 262.6c-3-4.1-7.8-6.6-12.9-6.6h-75c-6.5 0-10.3 7.4-6.5 12.7l352.6 486.1c12.8 17.6 39 17.6 51.7 0l352.6-486.1c3.9-5.3.1-12.7-6.4-12.7z"/>
                 </svg>
+                <div class="dropdown-menu"></div>
             </div>
             <div class="external-button" title="在新窗口打开翻译"></div>
             <div class="pin-button unpinned" title="固定窗口"></div>
             <div class="theme-button light" title="切换深色模式"></div>
             <div class="clear-button" title="关闭所有窗口"></div>
         </div>
-        <div class="dropdown-menu"></div>
         <div class="content"></div>`;
     document.body.appendChild(panel);
     state.allPanels.add(panel);
