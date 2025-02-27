@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         v4Words - 划词翻译 UserScript
 // @namespace    https://github.com/vlan20/v4words
-// @version      0.1.1
+// @version      0.1.2
 // @description  更便捷的划词翻译(select translator)，双击即译，支持谷歌翻译、有道词典及剑桥词典，适配Tampermonkey等脚本管理器。
 // @author       vlan20
 // @license      MIT
@@ -26,14 +26,18 @@
 // ==/UserScript==
 
 /*
-更新日期：2025-02-26
-当前版本：0.1.1
+更新日期：2025-02-27
+当前版本：0.1.2
+更新说明：
+1. 首次启动脚本时，默认翻译器更改：谷歌翻译->有道词典。
+2. 优化部分外观细节。
+3. 修复在部分网页上，翻译面板显示位置不正确的情况。
 
 使用说明：
-1. 双击选中的文本即可翻译
-2. 点击标题栏切换翻译器，目前支持谷歌翻译、有道词典及剑桥词典
-3. 点击音标按钮即可播放发音
-4. 窗口内单击右键，窗口外单击左键，关闭翻译窗口
+1. 双击选中的文本即可翻译。
+2. 点击标题栏切换翻译器，目前支持谷歌翻译、有道词典及剑桥词典。
+3. 点击音标按钮即可播放发音。
+4. 窗口内单击右键/窗口外单击左键，可关闭翻译窗口。
 */
 
 /*
@@ -77,7 +81,7 @@ SOFTWARE.
         maxPanelHeight: 400,
         titleBarHeight: 40, // 添加标题栏高度配置
         animationDuration: 200, // 添加动画持续时间配置
-        currentTranslator: GM_getValue('defaultTranslator', 'youdao'), // 从GM_getValue读取默认翻译器
+        currentTranslator: GM_getValue('defaultTranslator', 'youdao'), // 从GM_getValue读取默认翻译器，默认为有道
         cacheExpiration: 24 * 60 * 60 * 1000, // 缓存过期时间（24小时）
         maxCacheSize: 100, // 最大缓存条目数
     };
@@ -136,7 +140,7 @@ SOFTWARE.
             currentPanel = null;
         }
         // 从存储中获取默认翻译器
-        CONFIG.currentTranslator = GM_getValue('defaultTranslator', 'google');
+        CONFIG.currentTranslator = GM_getValue('defaultTranslator', 'youdao');
     }
 
     // 添加音频播放功能
@@ -167,10 +171,10 @@ SOFTWARE.
         translate: async (text) => {
             const cachedResult = translationCache.get(text, name);
             if (cachedResult) return cachedResult;
-            
+
             const result = await translateFn(text);
             if (!result) throw new Error(`${name}翻译失败: 翻译结果为空`);
-            
+
             translationCache.set(text, name, result);
             return result;
         }
@@ -210,7 +214,7 @@ SOFTWARE.
                         onload: resolve, onerror: reject
                     });
                 });
-                
+
                 const result = JSON.parse(response.responseText);
                 let translation = '';
                 const createPronHtml = (type, pron, url) => `<span class="phonetic-item">${type} /${pron}/ <button class="audio-button" data-url="${url}">🔊</button></span>`;
@@ -219,29 +223,29 @@ SOFTWARE.
                     uk: wordInfo?.ukspeech ? `https://dict.youdao.com/dictvoice?audio=${wordInfo.ukspeech}` : '',
                     us: wordInfo?.usspeech ? `https://dict.youdao.com/dictvoice?audio=${wordInfo.usspeech}` : ''
                 };
-                
+
                 // 添加音标和发音按钮
                 if (wordInfo?.ukphone || wordInfo?.usphone) {
-                    translation += '<div class="phonetic-buttons">';
+                        translation += '<div class="phonetic-buttons">';
                     if (wordInfo.ukphone && audioUrls.uk) translation += createPronHtml('英', wordInfo.ukphone, audioUrls.uk);
                     if (wordInfo.usphone && audioUrls.us) translation += createPronHtml('美', wordInfo.usphone, audioUrls.us);
-                    translation += '</div>\n\n';
+                        translation += '</div>\n\n';
                 }
-                
-                // 获取翻译结果
+
+            // 获取翻译结果
                 if (wordInfo?.trs) {
                     translation += wordInfo.trs.map(tr => tr.tr[0].l.i.join('; ')).join('\n');
-                } else if (result.fanyi) {
+            } else if (result.fanyi) {
                     translation = result.fanyi.tran;
-                } else if (result.translation) {
+            } else if (result.translation) {
                     translation = result.translation.join('\n');
-                } else if (result.web_trans?.web_translation) {
+            } else if (result.web_trans?.web_translation) {
                     translation = result.web_trans.web_translation
                         .map(item => item.trans.map(t => t.value).join('; '))
                         .join('\n');
                 }
-                
-                if (!translation) throw new Error('未找到翻译结果');
+
+            if (!translation) throw new Error('未找到翻译结果');
                 return translation;
             } catch (error) {
                 console.error('有道词典错误:', error);
@@ -292,7 +296,7 @@ SOFTWARE.
 
                 // 处理释义
                 function processSenses(senses, pos) {
-                    if (senses.length === 0 && pos) 
+                    if (senses.length === 0 && pos)
                         return `<div class="sense-block pos-only"><div class="pos-tags">${createPosTagsHtml(pos)}</div></div>`;
 
                     return senses.map(sense => {
@@ -301,13 +305,13 @@ SOFTWARE.
                         const levelTag = sense.querySelector('.dxref')?.textContent.trim() || '';
                         let senseProns = '';
                         const sensePronContainers = sense.querySelectorAll('.dpron-i');
-                        
+
                         if (sensePronContainers.length > 0) {
                             const ukContainer = Array.from(sensePronContainers).find(c => c.classList.contains('uk'));
                             const usContainer = Array.from(sensePronContainers).find(c => c.classList.contains('us'));
                             const sharedPron = sense.querySelector('.pron')?.textContent.trim();
                             senseProns = '<div class="sense-phonetic">';
-                            
+
                             if (sharedPron) {
                                 const ukUrl = ukContainer ? getFullUrl(ukContainer.querySelector('source[type="audio/mpeg"]')?.getAttribute('src')) : '';
                                 const usUrl = usContainer ? getFullUrl(usContainer.querySelector('source[type="audio/mpeg"]')?.getAttribute('src')) : '';
@@ -321,11 +325,11 @@ SOFTWARE.
                             senseProns += '</div>';
                         }
 
-                        return pos ? 
+                        return pos ?
                             `<div class="sense-block">
                                 <div class="pos-tags">${createPosTagsHtml(pos)}${levelTag ? `<div class="level-tag">${levelTag}</div>` : ''}</div>
                                 <div class="def-content">${senseProns}<div class="def-text">${def}</div>${trans ? `<div class="trans-line">${trans}</div>` : ''}</div>
-                            </div>` : 
+                            </div>` :
                             `<div class="sense-block no-pos">
                                 <div class="def-content">${senseProns}<div class="def-text">${def}</div>${trans ? `<div class="trans-line">${trans}</div>` : ''}</div>
                             </div>`;
@@ -426,8 +430,7 @@ SOFTWARE.
                                 background-image 0.15s ease-out,
                                 color 0.15s ease-out,
                                 border-color 0.15s ease-out,
-                                border-bottom-color 0.15s ease-out,
-                                box-shadow 0.15s ease-out;
+                                border-bottom-color 0.15s ease-out;
         }
 
         /* 深色模式变量 */
@@ -454,8 +457,6 @@ SOFTWARE.
         /* 2. 基础面板样式 */
         /* ================ */
         .translator-panel {
-            all: initial;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
             font-size: ${CONFIG.fontSize}px !important;
             line-height: 1.5 !important;
             color: var(--panel-text) !important;
@@ -465,7 +466,7 @@ SOFTWARE.
             padding: var(--spacing-md) !important;
             box-shadow: 0 4px 12px var(--panel-shadow) !important;
             max-width: ${CONFIG.panelWidth}px !important;
-            position: fixed !important; /* 使用fixed定位，确保相对于视口 */
+            position: absolute !important; /* 使用absolute定位，相对于文档定位 */
             z-index: 2147483647 !important;
             display: none;
             opacity: 0;
@@ -473,16 +474,16 @@ SOFTWARE.
             transition: var(--theme-transition),
                         opacity 0.3s,
                         transform 0.3s !important;
-            max-height: 80vh !important; /* 限制最大高度为视口高度的80% */
-            overflow: hidden !important; /* 确保面板不会溢出 */
+            max-height: 80vh !important;
+            overflow: hidden !important;
         }
 
         /* 拖动时的样式 */
         .translator-panel.dragging {
-            transition: none !important; /* 拖动时禁用过渡效果 */
-            opacity: 0.95 !important; /* 轻微透明 */
-            box-shadow: 0 8px 24px var(--panel-shadow) !important; /* 增强阴影 */
+            transition: none !important;
+            opacity: 0.95 !important;
             cursor: move !important;
+            pointer-events: none !important; /* 防止拖动时影响其他元素 */
         }
 
         /* 标题栏禁用文本选择 */
@@ -529,18 +530,41 @@ SOFTWARE.
             font-weight: 600 !important;
         }
 
-        /* 翻译内容容器样式 - 优化Firefox滚动条 */
+        /* 翻译内容容器样式 */
         .translator-panel .translation-container {
             flex: 1 !important;
             overflow-y: auto !important;
             padding: var(--spacing-md) var(--spacing-md) !important;
-            scrollbar-width: thin !important; /* Firefox 滚动条样式 */
-            scrollbar-color: var(--text-tertiary) var(--hover-bg) !important; /* Firefox 滚动条颜色 */
-            max-height: calc(80vh - ${CONFIG.titleBarHeight}px - 100px) !important; /* 进一步减小最大高度，确保不会溢出 */
-            word-wrap: break-word !important; /* 确保长单词换行 */
-            overflow-wrap: break-word !important; /* 现代浏览器的单词换行 */
-            white-space: normal !important; /* 允许正常换行 */
-            display: block !important; /* 确保容器正确显示 */
+            max-height: calc(80vh - ${CONFIG.titleBarHeight}px - 100px) !important;
+            word-wrap: break-word !important;
+            overflow-wrap: break-word !important;
+            white-space: normal !important;
+            display: block !important;
+        }
+
+        /* 统一的滚动条样式 - WebKit 浏览器 */
+        .translator-panel .translation-container::-webkit-scrollbar,
+        .translator-panel .dropdown-menu::-webkit-scrollbar {
+            width: 3px !important;
+            height: 3px !important;
+        }
+
+        .translator-panel .translation-container::-webkit-scrollbar-thumb,
+        .translator-panel .dropdown-menu::-webkit-scrollbar-thumb {
+            background: var(--text-tertiary) !important;
+            border-radius: 3px !important;
+            transition: background-color 0.2s !important;
+        }
+
+        .translator-panel .translation-container::-webkit-scrollbar-thumb:hover,
+        .translator-panel .dropdown-menu::-webkit-scrollbar-thumb:hover {
+            background: var(--text-secondary) !important;
+        }
+
+        .translator-panel .translation-container::-webkit-scrollbar-track,
+        .translator-panel .dropdown-menu::-webkit-scrollbar-track {
+            background: transparent !important; /* 透明轨道，更简约 */
+            border-radius: 3px !important;
         }
 
         /* 翻译结果样式 */
@@ -765,30 +789,27 @@ SOFTWARE.
 
         /* 下拉菜单基础样式 */
         .translator-panel .dropdown-menu {
-            position: absolute !important;
-            top: 100% !important; /* 确保下拉菜单在标题栏下方 */
+            position: fixed !important;
+            top: 0 !important;
             left: 0 !important;
+            min-width: 150px !important;
+            max-height: 300px !important;
+            overflow-y: auto !important;
             background: var(--panel-bg) !important;
             border: 1px solid var(--panel-border) !important;
-            border-radius: var(--spacing-sm) !important;
+            border-radius: 6px !important;
             box-shadow: 0 2px 8px var(--panel-shadow) !important;
-            padding: var(--spacing-sm) 0 !important;
-            width: 100% !important;
-            min-width: 120px !important;
-            max-height: 200px !important;
-            overflow-y: auto !important;
-            z-index: 2147483647 !important; /* 确保下拉菜单显示在最上层 */
-            display: none !important;
-            transition: var(--theme-transition) !important;
-            scrollbar-width: thin !important; /* Firefox 滚动条样式 */
-            scrollbar-color: var(--text-tertiary) var(--hover-bg) !important; /* Firefox 滚动条颜色 */
-            clip-path: none !important; /* 确保没有裁剪路径 */
-            visibility: visible !important; /* 确保可见性 */
-            opacity: 1 !important; /* 确保不透明 */
-            margin-top: 5px !important; /* 添加顶部间距 */
+            opacity: 0 !important;
+            visibility: hidden !important;
+            transform: scale(0.95) !important;
+            transform-origin: top left !important;
+            transition: opacity 0.15s ease-out, transform 0.15s ease-out, visibility 0.15s !important;
+            z-index: 2147483647 !important;
+            margin-top: 4px !important;
+            margin-left: 4px !important;
         }
 
-        /* 明确移除下拉菜单的三角形 */
+        /* 移除所有三角形装饰 */
         .translator-panel .dropdown-menu::before,
         .translator-panel .dropdown-menu::after,
         .translator-panel .title-wrapper::before,
@@ -802,7 +823,15 @@ SOFTWARE.
             background: none !important;
         }
 
-        /* 下拉菜单滚动条样式 - WebKit 浏览器 */
+        /* 下拉菜单显示状态 */
+        .translator-panel .dropdown-menu.show {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            transform: scale(1) !important;
+        }
+
+        /* 下拉菜单滚动条样式 */
         .translator-panel .dropdown-menu::-webkit-scrollbar {
             width: 3px !important; /* 更细的滚动条 */
             height: 3px !important;
@@ -821,14 +850,6 @@ SOFTWARE.
         .translator-panel .dropdown-menu::-webkit-scrollbar-track {
             background: transparent !important; /* 透明轨道，更简约 */
             border-radius: 3px !important;
-        }
-
-        /* 下拉菜单显示状态 */
-        .translator-panel .dropdown-menu.show {
-            display: block !important;
-            visibility: visible !important;
-            opacity: 1 !important;
-            z-index: 2147483647 !important;
         }
 
         /* 下拉菜单项样式 */
@@ -859,10 +880,15 @@ SOFTWARE.
         }
 
         .translator-panel .dropdown-item.is-default .translator-name::after {
-            content: '（默认）' !important;
-            font-weight: 600 !important;
+            content: '默认' !important;
+            font-size: var(--font-xs) !important;
+            font-weight: normal !important;
+            padding: 2px 4px !important;
+            border-radius: 3px !important;
+            background: var(--text-tertiary) !important;
+            color: var(--panel-bg) !important;
             margin-left: var(--spacing-sm) !important;
-            color: var(--text-tertiary) !important;
+            opacity: 0.8 !important;
         }
 
         .translator-panel .dropdown-item .set-default {
@@ -1042,11 +1068,6 @@ SOFTWARE.
         .translator-panel .switch-icon.open {
             transform: rotate(180deg) !important;
         }
-
-        /* 确保SVG内部不会显示三角形 */
-        .translator-panel .switch-icon path {
-            fill: currentColor !important;
-        }
     `);
 
     // 状态管理
@@ -1122,31 +1143,49 @@ SOFTWARE.
             const {pageXOffset: sx, pageYOffset: sy} = window;
             const spacing = CONFIG.panelSpacing;
             const panelWidth = CONFIG.panelWidth;
-            const panelX = Math.max(spacing + sx, Math.min(sx + vw - panelWidth - spacing, x));
-            const maxAvailableHeight = Math.min(CONFIG.maxPanelHeight, vh - 2 * spacing);
-            const actualMaxHeight = maxAvailableHeight;
-            const contentMaxHeight = actualMaxHeight - CONFIG.titleBarHeight - CONFIG.panelSpacing;
-            const spaceBelow = vh - (y - sy);
-            const minRequiredSpace = CONFIG.titleBarHeight + 100;
-            const panelY = spaceBelow >= minRequiredSpace ? 
-                Math.min(y + spacing, sy + vh - actualMaxHeight - spacing) : 
-                Math.max(sy + spacing, y - actualMaxHeight - spacing);
-            
+
+            // 先临时显示面板以获取实际高度
             Object.assign(targetPanel.style, {
-                position: 'fixed',
-                left: `${panelX - sx}px`,
-                top: `${panelY - sy}px`,
-                maxHeight: `${actualMaxHeight}px`,
+                position: 'absolute',
+                left: '-9999px',
+                top: '-9999px',
                 display: 'block',
-                zIndex: '2147483647'
+                maxHeight: `${CONFIG.maxPanelHeight}px`
             });
-            
-            targetPanel.dataset.initialX = panelX - sx;
-            targetPanel.dataset.initialY = panelY - sy;
-            
+
+            // 获取实际高度
+            const actualHeight = Math.min(targetPanel.offsetHeight, CONFIG.maxPanelHeight);
+            const contentMaxHeight = actualHeight - CONFIG.titleBarHeight - CONFIG.panelSpacing;
+
+            // 计算面板的水平位置，使用文档坐标
+            const panelX = Math.max(
+                spacing + sx,
+                Math.min(sx + vw - panelWidth - spacing, x)
+            );
+
+            // 计算面板的垂直位置，使用文档坐标
+            const spaceBelow = vh - (y - sy);
+            const spaceAbove = y - sy;
+
+            // 确定面板显示位置（上方或下方）
+            const panelY = spaceBelow >= actualHeight || spaceBelow >= spaceAbove ?
+                // 显示在下方，紧贴文本
+                y + spacing :
+                // 显示在上方，紧贴文本
+                y - actualHeight - spacing;
+
+            // 设置最终位置
+            Object.assign(targetPanel.style, {
+                position: 'absolute',
+                left: `${panelX}px`,
+                top: `${panelY}px`,
+                maxHeight: `${actualHeight}px`,
+                display: 'block'
+            });
+
             const content = targetPanel.querySelector('.content');
             if (content) content.style.maxHeight = `${contentMaxHeight}px`;
-            
+
             targetPanel.classList.toggle(CONFIG.darkModeClass, this.isDarkMode());
             setTimeout(() => targetPanel.classList.add('show'), 50);
         },
@@ -1202,20 +1241,20 @@ SOFTWARE.
         updateAllPanels(newTranslator, isDefaultUpdate = false) {
             const defaultTranslator = GM_getValue('defaultTranslator', 'google');
             if (!isDefaultUpdate) CONFIG.currentTranslator = newTranslator;
-            
+
             document.querySelectorAll('.translator-panel').forEach(p => {
                 if (!isDefaultUpdate) p.querySelector('.title').textContent = TRANSLATORS[newTranslator].name;
-                
+
                 p.querySelectorAll('.dropdown-item').forEach(item => {
                     const key = item.dataset.translator;
                     const isDefault = key === defaultTranslator;
                     const isActive = key === CONFIG.currentTranslator;
-                    
+
                     item.className = `dropdown-item${isActive ? ' active' : ''}${isDefault ? ' is-default' : ''}`;
-                    
+
                     const nameSpan = item.querySelector('.translator-name');
                     if (nameSpan) nameSpan.innerHTML = `${isActive ? '✓ ' : ''}${TRANSLATORS[key].name}`;
-                    
+
                     const defaultSpan = item.querySelector('.set-default');
                     if (defaultSpan) {
                         defaultSpan.textContent = isDefault ? '默认' : '设为默认';
@@ -1291,18 +1330,18 @@ SOFTWARE.
         const panel = document.createElement('div');
         panel.className = 'translator-panel';
         panel.innerHTML = `<div class="title-bar">
-            <div class="title-wrapper">
-                <span class="title">${TRANSLATORS[CONFIG.currentTranslator].name}</span>
-                <span class="switch-text">（点击切换）</span>
+                <div class="title-wrapper">
+                    <span class="title">${TRANSLATORS[CONFIG.currentTranslator].name}</span>
+                    <span class="switch-text">（点击切换）</span>
                 <svg class="switch-icon" viewBox="0 0 1024 1024"><path fill="currentColor" d="M884 256h-75c-5.1 0-9.9 2.5-12.9 6.6L512 654.2 227.9 262.6c-3-4.1-7.8-6.6-12.9-6.6h-75c-6.5 0-10.3 7.4-6.5 12.7l352.6 486.1c12.8 17.6 39 17.6 51.7 0l352.6-486.1c3.9-5.3.1-12.7-6.4-12.7z"/></svg>
                 <div class="dropdown-menu"></div>
+                </div>
+                <div class="external-button" title="在新窗口打开翻译"></div>
+                <div class="pin-button unpinned" title="固定窗口"></div>
+                <div class="theme-button light" title="切换深色模式"></div>
+                <div class="clear-button" title="关闭所有窗口"></div>
             </div>
-            <div class="external-button" title="在新窗口打开翻译"></div>
-            <div class="pin-button unpinned" title="固定窗口"></div>
-            <div class="theme-button light" title="切换深色模式"></div>
-            <div class="clear-button" title="关闭所有窗口"></div>
-        </div>
-        <div class="content"></div>`;
+            <div class="content"></div>`;
 
         setupPanelEvents(panel);
         return panel;
@@ -1407,16 +1446,16 @@ SOFTWARE.
                 return;
             }
             if (state.isRightClickPending || state.isDragging || utils.isClickInPanel(e)) return;
-            
+
             document.querySelectorAll('.translator-panel:not(.pinned)').forEach(p => {
                 p.classList.remove('show');
-                setTimeout(() => {
+                    setTimeout(() => {
                     if (!p.classList.contains('show')) {
                         p.style.display = 'none';
                         if (p !== currentPanel && !p.classList.contains('pinned')) p.remove();
-                    }
-                }, CONFIG.animationDuration);
-            });
+                        }
+                    }, CONFIG.animationDuration);
+                });
         }
     };
 
@@ -1442,7 +1481,7 @@ SOFTWARE.
             dropdownMenu.innerHTML = Object.entries(TRANSLATORS)
                 .map(([key, translator]) => `<div class="dropdown-item${key === CONFIG.currentTranslator ? ' active' : ''}${key === defaultTranslator ? ' is-default' : ''}" data-translator="${key}">
                     <span class="translator-name">${key === CONFIG.currentTranslator ? '✓ ' : ''}${translator.name}</span>
-                    <span class="set-default" title="设为默认翻译器">设为默认</span>
+                        <span class="set-default" title="设为默认翻译器">设为默认</span>
                 </div>`).join('');
         }
 
@@ -1454,23 +1493,21 @@ SOFTWARE.
             if (show) {
                 updateDropdownMenu();
                 dropdownMenu.classList.add('show');
-                // 强制重绘
+                // 计算下拉菜单的位置，添加边距
+                const titleRect = titleWrapper.getBoundingClientRect();
+                dropdownMenu.style.top = `${titleRect.bottom + 4}px`; // 添加 4px 的上边距
+                dropdownMenu.style.left = `${titleRect.left}px`;
                 dropdownMenu.style.display = 'block';
-                dropdownMenu.style.visibility = 'visible';
                 dropdownMenu.style.opacity = '1';
-                dropdownMenu.style.zIndex = '2147483647';
-                
-                // 简化定位逻辑
-                dropdownMenu.style.top = '100%';
-                dropdownMenu.style.left = '0';
-                dropdownMenu.style.width = '100%';
-                dropdownMenu.style.marginTop = '5px';
+                dropdownMenu.style.transform = 'scale(1)';
             } else {
                 dropdownMenu.classList.remove('show');
                 setTimeout(() => {
                     if (!targetPanel.isDropdownOpen) {
                         dropdownMenu.innerHTML = '';
-                        dropdownMenu.removeAttribute('style');
+                        dropdownMenu.style.display = 'none';
+                        dropdownMenu.style.opacity = '0';
+                        dropdownMenu.style.transform = 'scale(0.95)';
                     }
                 }, 150);
             }
@@ -1735,15 +1772,17 @@ SOFTWARE.
             if (!e.target.closest('.title-bar')) return;
             state.isDragging = true;
             state.dragTarget = targetPanel;
-            
+
             const dragInfo = {
                 startX: e.clientX,
                 startY: e.clientY,
                 startLeft: parseFloat(targetPanel.style.left) || 0,
-                startTop: parseFloat(targetPanel.style.top) || 0
+                startTop: parseFloat(targetPanel.style.top) || 0,
+                scrollX: window.scrollX,
+                scrollY: window.scrollY
             };
             targetPanel.dataset.dragInfo = JSON.stringify(dragInfo);
-            
+
             targetPanel.classList.add('dragging');
             utils.addEventHandler(document, 'mousemove', handleDragMove, {passive: false});
             utils.addEventHandler(document, 'mouseup', handleDragEnd, {passive: false});
@@ -1752,24 +1791,29 @@ SOFTWARE.
 
         const handleDragMove = e => {
             if (!state.isDragging || state.dragTarget !== targetPanel) return;
-            
+
             const dragInfo = JSON.parse(targetPanel.dataset.dragInfo);
             const dx = e.clientX - dragInfo.startX;
             const dy = e.clientY - dragInfo.startY;
-            
+            const scrollDX = window.scrollX - dragInfo.scrollX; // 使用scrollX替代pageXOffset
+            const scrollDY = window.scrollY - dragInfo.scrollY; // 使用scrollY替代pageYOffset
+
             const viewportWidth = window.innerWidth;
             const viewportHeight = window.innerHeight;
             const currentPanelWidth = targetPanel.offsetWidth;
             const currentPanelHeight = targetPanel.offsetHeight;
             const minVisiblePart = CONFIG.titleBarHeight;
 
+            // 计算新位置，考虑滚动偏移
             const newX = Math.max(
                 -currentPanelWidth + minVisiblePart,
-                Math.min(viewportWidth - minVisiblePart, dragInfo.startLeft + dx)
+                Math.min(viewportWidth + window.scrollX - minVisiblePart,
+                    dragInfo.startLeft + dx + scrollDX)
             );
             const newY = Math.max(
-                0,
-                Math.min(viewportHeight - minVisiblePart, dragInfo.startTop + dy)
+                window.scrollY,
+                Math.min(viewportHeight + window.scrollY - minVisiblePart,
+                    dragInfo.startTop + dy + scrollDY)
             );
 
             targetPanel.style.left = `${newX}px`;
@@ -1779,14 +1823,14 @@ SOFTWARE.
 
         const handleDragEnd = e => {
             if (!state.isDragging || state.dragTarget !== targetPanel) return;
-            
+
             state.isDragging = false;
             state.dragTarget = null;
             targetPanel.classList.remove('dragging');
-            
+
             utils.removeEventHandler(document, 'mousemove');
             utils.removeEventHandler(document, 'mouseup');
-            
+
             const dragInfo = JSON.parse(targetPanel.dataset.dragInfo);
             if (Math.abs(dragInfo.startLeft - parseFloat(targetPanel.style.left)) > 5 ||
                 Math.abs(dragInfo.startTop - parseFloat(targetPanel.style.top)) > 5) {
@@ -1798,7 +1842,7 @@ SOFTWARE.
                     state.pinnedPanels.add(targetPanel);
                 }
             }
-            
+
             if (e) {
                 e.preventDefault(); e.stopPropagation();
             }
@@ -1819,11 +1863,54 @@ SOFTWARE.
                 'youdao': `https://dict.youdao.com/w/${encodeURIComponent(text)}`,
                 'cambridge': `https://dictionary.cambridge.org/dictionary/english-chinese-simplified/${encodeURIComponent(text)}`
             };
-            
+
             const url = urls[CONFIG.currentTranslator];
             if (url) window.open(url, '_blank');
         }, {passive: false});
     }
+
+    // 添加滚动事件处理
+    let scrollTimer = null;
+    utils.addEventHandler(window, 'scroll', () => {
+        if (scrollTimer) return;
+        scrollTimer = setTimeout(() => {
+            scrollTimer = null;
+            document.querySelectorAll('.translator-panel:not(.dragging)').forEach(panel => {
+                if (!panel.style.display || panel.style.display === 'none') return;
+
+                const rect = panel.getBoundingClientRect();
+                const viewportWidth = window.innerWidth;
+                const viewportHeight = window.innerHeight;
+
+                // 检查面板是否部分不可见
+                if (rect.right < CONFIG.panelSpacing ||
+                    rect.left > viewportWidth - CONFIG.panelSpacing ||
+                    rect.bottom < CONFIG.panelSpacing ||
+                    rect.top > viewportHeight - CONFIG.panelSpacing) {
+
+                    // 调整位置使面板完全可见
+                    const newLeft = Math.max(
+                        CONFIG.panelSpacing + window.scrollX,
+                        Math.min(
+                            window.scrollX + viewportWidth - panel.offsetWidth - CONFIG.panelSpacing,
+                            rect.left + window.scrollX
+                        )
+                    );
+
+                    const newTop = Math.max(
+                        CONFIG.panelSpacing + window.scrollY,
+                        Math.min(
+                            window.scrollY + viewportHeight - panel.offsetHeight - CONFIG.panelSpacing,
+                            rect.top + window.scrollY
+                        )
+                    );
+
+                    panel.style.left = `${newLeft}px`;
+                    panel.style.top = `${newTop}px`;
+                }
+            });
+        }, 100); // 使用节流来优化性能
+    }, { passive: true });
 
     // 创建主翻译面板
     const panel = document.createElement('div');
